@@ -21,17 +21,36 @@ public class LoggerService {
         coreLog.warn("[{}] ⚠️ {}", source, message);
     }
 
+    public void error(String source, String message) {
+        coreLog.error("[{}] ❌ {}", source, message);
+    }
+
     public void error(String source, String message, Throwable e) {
-        coreLog.error("[{}] ❌ {}", source, message, e);
+        coreLog.error("[{}] ❌ {} — exception:", source, message, e);
     }
 
     public void debug(String source, String message) {
         coreLog.debug("[{}] 🐞 {}", source, message);
     }
 
-    // Optional convenience shorthand methods
-    public void info(String message) { info("General", message); }
-    public void warn(String message) { warn("General", message); }
-    public void debug(String message) { debug("General", message); }
-    public void error(String message, Throwable e) { error("General", message, e); }
+    // Convenience methods (default to "General")
+    public void info(String message) {
+        info("General", message);
+    }
+
+    public void warn(String message) {
+        warn("General", message);
+    }
+
+    public void error(String message) {
+        error("General", message);
+    }
+
+    public void error(String message, Throwable e) {
+        error("General", message, e);
+    }
+
+    public void debug(String message) {
+        debug("General", message);
+    }
 }
