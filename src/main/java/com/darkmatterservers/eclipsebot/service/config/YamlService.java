@@ -56,7 +56,7 @@ public class YamlService {
             Object data = yaml.load(input);
             if (data instanceof Map<?, ?> loadedMap) {
                 configMap = castToStringObjectMap(loadedMap);
-                logger.info("📄 Loaded config.yaml successfully.", getClass().toString());
+                logger.info("📄 Loaded config.yaml successfully.");
             } else {
                 logger.warn("⚠️ config.yaml loaded but format is invalid.", getClass().toString());
                 configMap = new LinkedHashMap<>();
@@ -80,7 +80,7 @@ public class YamlService {
     public void saveToFile(String filePath, Map<String, Object> data) {
         try (FileWriter writer = new FileWriter(filePath)) {
             yaml.dump(data, writer);
-            logger.info("✅ Saved YAML config to " + filePath, getClass().toString());
+            logger.info("✅ Saved YAML config to " + filePath);
         } catch (IOException e) {
             logger.error("❌ Failed to save YAML config: " + e.getMessage(), getClass().toString());
         }
@@ -138,7 +138,7 @@ public class YamlService {
             }
         }
 
-        logger.info("📝 Updated config.yaml field: " + path + " = " + value, getClass().toString());
+        logger.info("📝 Updated config.yaml field: " + path + " = " + value);
         save();
     }
 

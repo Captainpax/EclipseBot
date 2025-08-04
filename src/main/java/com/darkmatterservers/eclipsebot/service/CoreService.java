@@ -3,11 +3,13 @@ package com.darkmatterservers.eclipsebot.service;
 import com.darkmatterservers.eclipsebot.service.config.YamlService;
 import com.darkmatterservers.eclipsebot.service.config.builders.InitYaml;
 import com.darkmatterservers.eclipsebot.service.discord.DiscordService;
+import net.dv8tion.jda.api.JDA;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Handles the application startup and config bootstrapping.
@@ -19,6 +21,7 @@ public class CoreService {
     private final InitYaml initYaml;
     private final YamlService yamlService;
     private final DiscordService discordService;
+    private final AtomicReference<JDA> jdaRef;
 
     private static final String CONFIG_PATH = "config.yaml";
 
@@ -26,19 +29,21 @@ public class CoreService {
             LoggerService logger,
             InitYaml initYaml,
             YamlService yamlService,
-            DiscordService discordService
+            DiscordService discordService,
+            AtomicReference<JDA> jdaRef
     ) {
         this.logger = logger;
         this.initYaml = initYaml;
         this.yamlService = yamlService;
         this.discordService = discordService;
+        this.jdaRef = jdaRef;
     }
 
     /**
      * Starts the core service and initializes the bot if config is valid.
      */
     public void start() {
-        logger.info("🚀 Starting CoreService...", getClass().toString());
+        logger.info("🚀 Starting CoreService...");
 
         File configFile = new File(CONFIG_PATH);
         boolean configMissingOrEmpty = !configFile.exists() || configFile.length() == 0;
@@ -50,10 +55,10 @@ public class CoreService {
         if (configMissingOrEmpty) {
             logger.warn("🛠 config.yaml not found or empty — creating from defaults", getClass().toString());
             yamlService.saveToFile(CONFIG_PATH, mergedConfig);
-            logger.info("📄 config.yaml created. Please review and restart the application.", getClass().toString());
+            logger.info("📄 config.yaml created. Please review and restart the application.");
             return;
         } else {
-            logger.info("📁 config.yaml found — ensuring all required fields are present", getClass().toString());
+            logger.info("📁 config.yaml found — ensuring all required fields are present");
             yamlService.saveToFile(CONFIG_PATH, mergedConfig);
         }
 
@@ -66,8 +71,15 @@ public class CoreService {
             return;
         }
 
-        logger.info("✅ config.yaml verified. Launching DiscordService...", getClass().toString());
-        discordService.start();
+        logger.info("✅ config.yaml verified. Launching DiscordService...");
+
+        JDA jda = discordService.start(); // Updated to return JDA
+        if (jda != null) {
+            jdaRef.set(jda);
+            logger.success("🤖 JDA is ready and reference set.", getClass().toString());
+        } else {
+            logger.error("❌ Failed to start DiscordService / JDA.", getClass().toString());
+        }
     }
 
     @SuppressWarnings("unchecked")

@@ -2,7 +2,8 @@ package com.darkmatterservers.eclipsebot.service.discord;
 
 import com.darkmatterservers.eclipsebot.service.LoggerService;
 import com.darkmatterservers.eclipsebot.service.config.YamlService;
-import com.darkmatterservers.eclipsebot.service.discord.builders.*;
+import com.darkmatterservers.eclipsebot.service.discord.builders.MessageBuilder;
+import com.darkmatterservers.eclipsebot.service.discord.listeners.ButtonListener;
 import jakarta.annotation.PreDestroy;
 import lombok.Getter;
 import net.dv8tion.jda.api.JDA;
@@ -17,34 +18,39 @@ import java.util.EnumSet;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Handles all Discord bot lifecycle and interactions.
+ * Handles the lifecycle and connection of the EclipseBot Discord client.
  */
 @Service
 public class DiscordService {
 
     private final LoggerService logger;
     private final YamlService yamlService;
-    private final MessageBuilder messageBuilder;
+    private final MessagingService messagingService;
     private final AtomicReference<JDA> jdaRef;
+    private final ButtonListener buttonListener;
 
     private String token;
     private String botId;
     private String adminId;
 
     private JDA jda;
+
     @Getter
     private boolean running = false;
 
     public DiscordService(
             LoggerService logger,
             YamlService yamlService,
+            MessagingService messagingService,
             MessageBuilder messageBuilder,
-            AtomicReference<JDA> jdaRef
+            AtomicReference<JDA> jdaRef,
+            ButtonListener buttonListener
     ) {
         this.logger = logger;
         this.yamlService = yamlService;
-        this.messageBuilder = messageBuilder;
+        this.messagingService = messagingService;
         this.jdaRef = jdaRef;
+        this.buttonListener = buttonListener;
 
         this.token = yamlService.getString("discord.token");
         this.botId = yamlService.getString("discord.botId");
@@ -55,13 +61,10 @@ public class DiscordService {
         }
     }
 
-    /**
-     * Starts the Discord bot if the token is valid.
-     */
-    public void start() {
+    public JDA start() {
         if (token == null || token.isBlank()) {
             logger.warn("⚠️ DiscordService start skipped — token not set", String.valueOf(getClass()));
-            return;
+            return null;
         }
 
         try {
@@ -85,20 +88,20 @@ public class DiscordService {
                     .build()
                     .awaitReady();
 
-            jdaRef.set(jda); // Provide live JDA to other services
-            logger.setJDA(jda); // Enable logger Discord mirroring
+            jdaRef.set(jda);         // Global access
+            logger.setJDA(jda);      // Log to Discord if enabled
             running = true;
 
             logger.success("✅ Discord bot is online as " + jda.getSelfUser().getAsTag(), String.valueOf(getClass()));
 
-            // DM the admin
+            jda.addEventListener(buttonListener);
+            logger.info("✅ ButtonListener registered with JDA", String.valueOf(getClass()));
+
             if (adminId != null && !adminId.isBlank()) {
-                String msg = messageBuilder.format(
-                        "👋 EclipseBot Started",
-                        "The bot is up and running and ready to serve.\nUse `/setup` in a server to configure roles and channels."
-                );
-                messageBuilder.sendPrivateMessage(adminId, msg);
+                messagingService.greetAdminOnStartup(adminId);
             }
+
+            return jda;
 
         } catch (InvalidTokenException e) {
             logger.error("❌ Invalid Discord token — startup failed.", String.valueOf(getClass()));
@@ -108,11 +111,10 @@ public class DiscordService {
         } catch (Exception e) {
             logger.error("🔥 Unexpected error during Discord startup: " + e.getMessage(), String.valueOf(getClass()));
         }
+
+        return null;
     }
 
-    /**
-     * Stops the Discord bot cleanly.
-     */
     public void stop() {
         if (running && jda != null) {
             logger.info("🛑 Shutting down Discord bot...", String.valueOf(getClass()));
@@ -121,9 +123,6 @@ public class DiscordService {
         }
     }
 
-    /**
-     * Restarts the bot with new credentials and writes them to YAML.
-     */
     public void restartWithToken(String token, String botId, String adminId) {
         stop();
 

@@ -25,7 +25,7 @@ public class InitYaml {
      * Builds the default config structure merged with existing fields.
      */
     public Map<String, Object> getDefaultConfig() {
-        logger.info("🛠 InitYaml: Building merged config map...", getClass().toString());
+        logger.info("🛠 InitYaml: Building merged config map...");
 
         Map<String, Object> defaults = new LinkedHashMap<>();
 
@@ -58,7 +58,7 @@ public class InitYaml {
         Map<String, Object> current = yamlService.getFullConfig();
         Map<String, Object> merged = yamlService.deepMerge(defaults, current);
 
-        logger.info("✅ Merged default config with existing values.", getClass().toString());
+        logger.info("✅ Merged default config with existing values.");
         return merged;
     }
 }

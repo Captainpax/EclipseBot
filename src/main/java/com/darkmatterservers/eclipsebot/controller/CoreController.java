@@ -27,7 +27,7 @@ public class CoreController {
     @GetMapping(value = "/", produces = MediaType.TEXT_HTML_VALUE)
     @ResponseBody
     public String root() {
-        logger.info("🌐 GET / requested — responding with homepage", getClass().toString());
+        logger.info("🌐 GET / requested — responding with homepage");
 
         return ThemeMiddleware.wrap("Welcome to EclipseBot", """
             <h1>🌌 EclipseBot Control Panel</h1>
@@ -43,7 +43,7 @@ public class CoreController {
     @GetMapping(value = "/ding", produces = MediaType.TEXT_HTML_VALUE)
     @ResponseBody
     public String ding() {
-        logger.info("🔄 GET /ding requested — checking bot status", getClass().toString());
+        logger.info("🔄 GET /ding requested — checking bot status");
 
         String botName = "Unavailable";
         String botId = "Unavailable";
@@ -75,7 +75,7 @@ public class CoreController {
     @GetMapping(value = "/status", produces = MediaType.TEXT_HTML_VALUE)
     @ResponseBody
     public String status() {
-        logger.info("📈 GET /status requested — returning service status", getClass().toString());
+        logger.info("📈 GET /status requested — returning service status");
 
         boolean isOnline = discordService.isRunning();
         JDA jda = discordService.getJDA();
@@ -135,7 +135,7 @@ public class CoreController {
             @RequestParam String botId,
             @RequestParam String adminId
     ) {
-        logger.info("🔐 Received bot credentials from setup form", getClass().toString());
+        logger.info("🔐 Received bot credentials from setup form");
 
         yamlService.setMultiple(Map.of(
                 "discord.token", token,

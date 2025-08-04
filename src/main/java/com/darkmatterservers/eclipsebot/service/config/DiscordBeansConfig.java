@@ -16,17 +16,4 @@ public class DiscordBeansConfig {
     public AtomicReference<JDA> jdaReference() {
         return new AtomicReference<>();
     }
-
-    /**
-     * Exposes the current JDA instance as a bean after it's been initialized.
-     * Spring will attempt to inject this only when it's available.
-     */
-    @Bean
-    public JDA jda(AtomicReference<JDA> jdaReference) {
-        JDA jda = jdaReference.get();
-        if (jda == null) {
-            throw new IllegalStateException("JDA instance has not been initialized yet.");
-        }
-        return jda;
-    }
 }
