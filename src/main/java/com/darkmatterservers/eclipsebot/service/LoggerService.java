@@ -34,8 +34,8 @@ public class LoggerService {
         log("WARN", msg, source, null);
     }
 
-    public void error(String msg, String source, Throwable t) {
-        log("ERROR", msg, source, t);
+    public void error(String msg, String source) {
+        log("ERROR", msg, source, null); // No throwable to pass, so use null
     }
 
     public void success(String msg, String source) {

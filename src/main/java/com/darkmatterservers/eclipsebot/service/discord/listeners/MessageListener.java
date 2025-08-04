@@ -1,3 +1,4 @@
+// Updated: MessageListener.java
 package com.darkmatterservers.eclipsebot.service.discord.listeners;
 
 import com.darkmatterservers.eclipsebot.service.LoggerService;
@@ -21,28 +22,23 @@ public class MessageListener extends ListenerAdapter {
         Message message = event.getMessage();
         User author = event.getAuthor();
 
-        // Ignore bot's own messages
         if (author.isBot()) return;
 
         String content = message.getContentDisplay();
         String channelType = event.isFromGuild() ? "Guild" : "Private";
         String channelName = event.isFromGuild()
                 ? message.getGuild().getName() + " / #" + message.getChannel().getName()
-                : "Direct Message";
+                : "DM";
 
-        String msgType = message.isWebhookMessage() ? "Webhook"
-                : message.isEphemeral() ? "Ephemeral"
-                : message.getType().name();
-
-        String tag = String.format("[%s] (%s) <%s#%s | %s> → %s",
+        String summary = String.format("[%s] <%s#%s | %s> @ %s → %s",
                 channelType,
-                msgType,
                 author.getName(),
                 author.getDiscriminator(),
                 author.getId(),
+                channelName,
                 content
         );
 
-        logger.info("MessageListener", tag);
+        logger.info("MessageListener", summary);
     }
 }

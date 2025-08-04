@@ -1,24 +1,31 @@
 package com.darkmatterservers.eclipsebot.controller;
 
 import com.darkmatterservers.eclipsebot.service.LoggerService;
+import com.darkmatterservers.eclipsebot.service.config.YamlService;
 import com.darkmatterservers.eclipsebot.service.discord.DiscordService;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.SelfUser;
 import org.springframework.http.MediaType;
+import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 
-@RestController
+import java.util.Map;
+
+@Controller
 public class CoreController {
 
     private final LoggerService logger;
     private final DiscordService discordService;
+    private final YamlService yamlService;
 
-    public CoreController(LoggerService logger, DiscordService discordService) {
+    public CoreController(LoggerService logger, DiscordService discordService, YamlService yamlService) {
         this.logger = logger;
         this.discordService = discordService;
+        this.yamlService = yamlService;
     }
 
     @GetMapping(value = "/", produces = MediaType.TEXT_HTML_VALUE)
+    @ResponseBody
     public String root() {
         logger.info("🌐 GET / requested — responding with homepage", getClass().toString());
 
@@ -34,6 +41,7 @@ public class CoreController {
     }
 
     @GetMapping(value = "/ding", produces = MediaType.TEXT_HTML_VALUE)
+    @ResponseBody
     public String ding() {
         logger.info("🔄 GET /ding requested — checking bot status", getClass().toString());
 
@@ -47,13 +55,13 @@ public class CoreController {
                 SelfUser bot = jda.getSelfUser();
                 botName = bot.getName();
                 botId = bot.getId();
-                statusMessage = "<h2>🔔 Dong!</h2><p>The bot is awake and <strong>connected</strong>.</p>";
+                statusMessage = "<h2>🔔 Ding Dong!</h2><p>The bot is awake and <strong>connected</strong>.</p>";
             } else {
                 statusMessage = "<h2>🔕 Dong?</h2><p>The bot is <strong>not connected</strong>.</p>";
             }
         } catch (Exception e) {
-            logger.error("❌ Error during /ding: " + e.getMessage(), getClass().toString(), e);
-            statusMessage = "<h2>❌ Dong Failed</h2><p>Could not check bot status.</p>";
+            logger.error("❌ Error during /ding: " + e.getMessage(), getClass().toString());
+            statusMessage = "<h2>❌ Ding Failed</h2><p>Could not check bot status.</p>";
         }
 
         statusMessage += """
@@ -65,6 +73,7 @@ public class CoreController {
     }
 
     @GetMapping(value = "/status", produces = MediaType.TEXT_HTML_VALUE)
+    @ResponseBody
     public String status() {
         logger.info("📈 GET /status requested — returning service status", getClass().toString());
 
@@ -101,6 +110,7 @@ public class CoreController {
     }
 
     @GetMapping(value = "/setup", produces = MediaType.TEXT_HTML_VALUE)
+    @ResponseBody
     public String setupForm() {
         return ThemeMiddleware.wrap("EclipseBot Setup", """
             <h2>🔧 Setup EclipseBot</h2>
@@ -119,7 +129,7 @@ public class CoreController {
         """);
     }
 
-    @PostMapping(value = "/setup", produces = MediaType.TEXT_HTML_VALUE)
+    @PostMapping("/setup")
     public String submitSetup(
             @RequestParam String token,
             @RequestParam String botId,
@@ -127,9 +137,22 @@ public class CoreController {
     ) {
         logger.info("🔐 Received bot credentials from setup form", getClass().toString());
 
+        yamlService.setMultiple(Map.of(
+                "discord.token", token,
+                "discord.botId", botId,
+                "adminId", adminId
+        ));
+        yamlService.save();
+
         discordService.restartWithToken(token, botId, adminId);
 
-        return ThemeMiddleware.wrap("Restarting...", """
+        return "redirect:/setup/waiting";
+    }
+
+    @GetMapping(value = "/setup/waiting", produces = MediaType.TEXT_HTML_VALUE)
+    @ResponseBody
+    public String setupWaiting() {
+        return ThemeMiddleware.wrap("Waiting for Bot", """
             <h2>♻️ Restarting DiscordService...</h2>
             <p>Please wait while the bot restarts.</p>
             <p>You will be redirected once it is back online.</p>

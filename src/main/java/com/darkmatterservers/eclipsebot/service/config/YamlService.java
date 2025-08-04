@@ -55,14 +55,14 @@ public class YamlService {
         try (FileInputStream input = new FileInputStream(file)) {
             Object data = yaml.load(input);
             if (data instanceof Map<?, ?> loadedMap) {
-                configMap = (Map<String, Object>) loadedMap;
+                configMap = castToStringObjectMap(loadedMap);
                 logger.info("📄 Loaded config.yaml successfully.", getClass().toString());
             } else {
                 logger.warn("⚠️ config.yaml loaded but format is invalid.", getClass().toString());
                 configMap = new LinkedHashMap<>();
             }
         } catch (IOException e) {
-            logger.error("❌ Failed to load config.yaml: " + e.getMessage(), getClass().toString(), e);
+            logger.error("❌ Failed to load config.yaml: " + e.getMessage(), getClass().toString());
             configMap = new LinkedHashMap<>();
         }
     }
@@ -82,7 +82,7 @@ public class YamlService {
             yaml.dump(data, writer);
             logger.info("✅ Saved YAML config to " + filePath, getClass().toString());
         } catch (IOException e) {
-            logger.error("❌ Failed to save YAML config: " + e.getMessage(), getClass().toString(), e);
+            logger.error("❌ Failed to save YAML config: " + e.getMessage(), getClass().toString());
         }
     }
 
@@ -105,8 +105,8 @@ public class YamlService {
                 value = current.get(key);
             } else {
                 Object nested = current.get(key);
-                if (!(nested instanceof Map<?, ?>)) return null;
-                current = (Map<String, Object>) nested;
+                if (!(nested instanceof Map)) return null;
+                current = castToStringObjectMap(nested);
             }
         }
 
@@ -114,9 +114,13 @@ public class YamlService {
     }
 
     /**
-     * Set a nested value using dot-path (e.g., "discord.token") and create structure if needed
+     * Set a nested value using a dot-path (e.g., "discord.token") and create structure if needed
      */
     public void set(String path, Object value) {
+        if (configMap == null || configMap.isEmpty()) {
+            load();
+        }
+
         String[] parts = path.split("\\.");
         Map<String, Object> current = configMap;
 
@@ -130,14 +134,59 @@ public class YamlService {
                     next = new LinkedHashMap<String, Object>();
                     current.put(key, next);
                 }
-                current = (Map<String, Object>) next;
+                current = castToStringObjectMap(next);
             }
         }
 
         logger.info("📝 Updated config.yaml field: " + path + " = " + value, getClass().toString());
+        save();
+    }
+
+    public void setMultiple(Map<String, Object> updates) {
+        for (Map.Entry<String, Object> entry : updates.entrySet()) {
+            set(entry.getKey(), entry.getValue());
+        }
     }
 
     public Map<String, Object> getFullConfig() {
         return configMap;
+    }
+
+    /**
+     * Merges defaultMap with overrideMap (override wins), recursively
+     */
+    public Map<String, Object> deepMerge(Map<String, Object> defaultMap, Map<String, Object> overrideMap) {
+        Map<String, Object> result = new LinkedHashMap<>(defaultMap);
+
+        for (Map.Entry<String, Object> entry : overrideMap.entrySet()) {
+            String key = entry.getKey();
+            Object overrideValue = entry.getValue();
+            Object baseValue = result.get(key);
+
+            if (overrideValue instanceof Map && baseValue instanceof Map) {
+                Map<String, Object> mergedChild = deepMerge(
+                        castToStringObjectMap(baseValue),
+                        castToStringObjectMap(overrideValue)
+                );
+                result.put(key, mergedChild);
+            } else {
+                result.put(key, overrideValue);
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * Safely casts a generic map to Map<String, Object>
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> castToStringObjectMap(Object obj) {
+        try {
+            return (Map<String, Object>) obj;
+        } catch (ClassCastException e) {
+            logger.error("❌ Failed to cast object to Map<String, Object>: " + e.getMessage(), getClass().toString());
+            return new LinkedHashMap<>();
+        }
     }
 }

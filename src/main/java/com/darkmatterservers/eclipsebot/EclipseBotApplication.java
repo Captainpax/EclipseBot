@@ -17,6 +17,7 @@ public class EclipseBotApplication {
 
         try {
             ConfigurableApplicationContext context = SpringApplication.run(EclipseBotApplication.class, args);
+
             logger = context.getBean(LoggerService.class);
             CoreService coreService = context.getBean(CoreService.class);
 
@@ -25,10 +26,9 @@ public class EclipseBotApplication {
 
         } catch (Exception e) {
             if (logger != null) {
-                logger.error("Startup", "🔥 Fatal error during startup", e);
+                logger.error("Startup", "🔥 Fatal error during startup: " + e.getMessage());
             } else {
                 System.err.println("🔥 Fatal error during startup (Logger unavailable)");
-                // Replacing printStackTrace() with compact formatted error:
                 System.err.println("Exception: " + e.getClass().getSimpleName() + " — " + e.getMessage());
             }
             System.exit(1);

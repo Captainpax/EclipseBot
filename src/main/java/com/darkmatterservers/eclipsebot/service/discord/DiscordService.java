@@ -2,16 +2,19 @@ package com.darkmatterservers.eclipsebot.service.discord;
 
 import com.darkmatterservers.eclipsebot.service.LoggerService;
 import com.darkmatterservers.eclipsebot.service.config.YamlService;
+import com.darkmatterservers.eclipsebot.service.discord.builders.*;
 import jakarta.annotation.PreDestroy;
+import lombok.Getter;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.entities.Activity;
-import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.exceptions.InvalidTokenException;
 import net.dv8tion.jda.api.requests.GatewayIntent;
+import net.dv8tion.jda.api.utils.cache.CacheFlag;
 import org.springframework.stereotype.Service;
 
 import java.util.EnumSet;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Handles all Discord bot lifecycle and interactions.
@@ -21,17 +24,27 @@ public class DiscordService {
 
     private final LoggerService logger;
     private final YamlService yamlService;
+    private final MessageBuilder messageBuilder;
+    private final AtomicReference<JDA> jdaRef;
 
     private String token;
     private String botId;
     private String adminId;
 
     private JDA jda;
+    @Getter
     private boolean running = false;
 
-    public DiscordService(LoggerService logger, YamlService yamlService) {
+    public DiscordService(
+            LoggerService logger,
+            YamlService yamlService,
+            MessageBuilder messageBuilder,
+            AtomicReference<JDA> jdaRef
+    ) {
         this.logger = logger;
         this.yamlService = yamlService;
+        this.messageBuilder = messageBuilder;
+        this.jdaRef = jdaRef;
 
         this.token = yamlService.getString("discord.token");
         this.botId = yamlService.getString("discord.botId");
@@ -59,38 +72,42 @@ public class DiscordService {
                             GatewayIntent.MESSAGE_CONTENT,
                             GatewayIntent.GUILD_MEMBERS
                     ))
+                    .disableCache(
+                            CacheFlag.ACTIVITY,
+                            CacheFlag.VOICE_STATE,
+                            CacheFlag.EMOJI,
+                            CacheFlag.STICKER,
+                            CacheFlag.CLIENT_STATUS,
+                            CacheFlag.ONLINE_STATUS,
+                            CacheFlag.SCHEDULED_EVENTS
+                    )
                     .setActivity(Activity.watching("for /setup requests"))
                     .build()
                     .awaitReady();
 
-            logger.setJDA(jda); // enable logger's Discord mirroring
+            jdaRef.set(jda); // Provide live JDA to other services
+            logger.setJDA(jda); // Enable logger Discord mirroring
             running = true;
 
             logger.success("✅ Discord bot is online as " + jda.getSelfUser().getAsTag(), String.valueOf(getClass()));
 
-            // DM the admin on startup
+            // DM the admin
             if (adminId != null && !adminId.isBlank()) {
-                jda.retrieveUserById(adminId).queue(
-                        user -> sendAdminDM(user),
-                        error -> logger.warn("⚠️ Failed to find admin user (ID: " + adminId + "): " + error.getMessage(), String.valueOf(getClass()))
+                String msg = messageBuilder.format(
+                        "👋 EclipseBot Started",
+                        "The bot is up and running and ready to serve.\nUse `/setup` in a server to configure roles and channels."
                 );
+                messageBuilder.sendPrivateMessage(adminId, msg);
             }
 
         } catch (InvalidTokenException e) {
-            logger.error("❌ Invalid Discord token — startup failed.", String.valueOf(getClass()), e);
+            logger.error("❌ Invalid Discord token — startup failed.", String.valueOf(getClass()));
         } catch (InterruptedException e) {
-            logger.error("❌ Startup interrupted while connecting to Discord.", String.valueOf(getClass()), e);
+            logger.error("❌ Startup interrupted while connecting to Discord.", String.valueOf(getClass()));
             Thread.currentThread().interrupt();
         } catch (Exception e) {
-            logger.error("🔥 Unexpected error during Discord startup: " + e.getMessage(), String.valueOf(getClass()), e);
+            logger.error("🔥 Unexpected error during Discord startup: " + e.getMessage(), String.valueOf(getClass()));
         }
-    }
-
-    private void sendAdminDM(User user) {
-        user.openPrivateChannel().queue(
-                channel -> channel.sendMessage("👋 I'm up and running! Ready to serve.").queue(),
-                error -> logger.warn("⚠️ Failed to open DM with admin: " + error.getMessage(), String.valueOf(getClass()))
-        );
     }
 
     /**
@@ -126,22 +143,6 @@ public class DiscordService {
     @PreDestroy
     public void onShutdown() {
         stop();
-    }
-
-    public String getToken() {
-        return token;
-    }
-
-    public String getBotId() {
-        return botId;
-    }
-
-    public String getAdminId() {
-        return adminId;
-    }
-
-    public boolean isRunning() {
-        return running;
     }
 
     public JDA getJDA() {
