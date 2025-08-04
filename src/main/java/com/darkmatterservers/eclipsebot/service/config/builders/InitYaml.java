@@ -22,19 +22,31 @@ public class InitYaml {
      * Builds the default config structure as a map.
      */
     public Map<String, Object> getDefaultConfig() {
-        logger.info("🛠 InitYaml: Building default config map...", String.valueOf(getClass()));
+        logger.info("🛠 InitYaml: Building default config map...", getClass().toString());
 
         Map<String, Object> config = new LinkedHashMap<>();
+
+        // Discord block
+        Map<String, Object> discord = new LinkedHashMap<>();
+        discord.put("token", "your-token-here");
+        discord.put("botId", "your-bot-id-here");
+        config.put("discord", discord);
+
+        // Top-level metadata
         config.put("bootstrapped", false);
         config.put("guildId", "your-guild-id-here");
         config.put("adminId", "your-admin-id-here");
 
+        // Port range
         Map<String, Object> portRange = new LinkedHashMap<>();
         portRange.put("start", 5000);
         portRange.put("end", 5100);
         config.put("portRange", portRange);
 
+        // Server FQDN
         config.put("fqdn", "example.com");
+
+        // Channel IDs
         config.put("consoleChannelId", "");
         config.put("logsChannelId", "");
         config.put("waitingRoomChannelId", "");

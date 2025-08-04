@@ -31,17 +31,26 @@ public class CoreService {
     }
 
     public void start() {
-        logger.info("🚀 Starting CoreService...", String.valueOf(getClass()));
+        logger.info("🚀 Starting CoreService...", getClass().toString());
 
         File configFile = new File(CONFIG_PATH);
         if (!configFile.exists() || configFile.length() == 0) {
-            logger.warn("🛠 config.yaml not found or empty — generating default config...");
+            logger.warn("🛠 config.yaml not found or empty — generating default config...", getClass().toString());
+
             Map<String, Object> defaultConfig = initYaml.getDefaultConfig();
             yamlService.saveToFile(CONFIG_PATH, defaultConfig);
-            logger.info("📄 config.yaml created. Please review and restart the application.");
+
+            logger.info("📄 config.yaml created. Please review and restart the application.", getClass().toString());
         } else {
-            logger.info("🧩 config.yaml found. Launching DiscordService...");
+            logger.info("🧩 config.yaml found. Launching DiscordService...", getClass().toString());
             discordService.start();
+        }
+    }
+
+    public void blockIndefinitely() {
+        try {
+            Thread.currentThread().join();
+        } catch (InterruptedException ignored) {
         }
     }
 }

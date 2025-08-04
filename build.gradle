@@ -27,6 +27,9 @@ dependencies {
 	// ✅ Spring Boot Web
 	implementation 'org.springframework.boot:spring-boot-starter-web'
 
+    //Discord
+    implementation 'net.dv8tion:JDA:5.6.1'
+
 	// 🧰 Lombok
 	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'

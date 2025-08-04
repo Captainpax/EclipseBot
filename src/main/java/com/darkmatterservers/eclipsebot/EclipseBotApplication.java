@@ -13,19 +13,25 @@ import org.springframework.context.ConfigurableApplicationContext;
 public class EclipseBotApplication {
 
     public static void main(String[] args) {
-        ConfigurableApplicationContext context = SpringApplication.run(EclipseBotApplication.class, args);
-
-        LoggerService logger = context.getBean(LoggerService.class);
-        CoreService coreService = context.getBean(CoreService.class);
-
-        logger.info("Startup", "✅ EclipseBotApplication started successfully.");
-
-        coreService.start();
+        LoggerService logger = null;
 
         try {
-            Thread.currentThread().join(); // Keeps app alive
-        } catch (InterruptedException ignored) {
-            logger.warn("Startup", "Main thread interrupted — shutting down.");
+            ConfigurableApplicationContext context = SpringApplication.run(EclipseBotApplication.class, args);
+            logger = context.getBean(LoggerService.class);
+            CoreService coreService = context.getBean(CoreService.class);
+
+            logger.success("Startup", "✅ EclipseBot started successfully.");
+            coreService.start();
+
+        } catch (Exception e) {
+            if (logger != null) {
+                logger.error("Startup", "🔥 Fatal error during startup", e);
+            } else {
+                System.err.println("🔥 Fatal error during startup (Logger unavailable)");
+                // Replacing printStackTrace() with compact formatted error:
+                System.err.println("Exception: " + e.getClass().getSimpleName() + " — " + e.getMessage());
+            }
+            System.exit(1);
         }
     }
 }

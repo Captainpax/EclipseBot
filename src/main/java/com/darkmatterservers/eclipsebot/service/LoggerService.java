@@ -1,56 +1,60 @@
 package com.darkmatterservers.eclipsebot.service;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.darkmatterservers.eclipsebot.service.config.YamlService;
+import jakarta.annotation.PostConstruct;
+import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
-/**
- * Centralized logging service for EclipseBot.
- * All modules should log through this for consistent formatting and future log handling.
- */
 @Service
 public class LoggerService {
 
-    private final Logger coreLog = LoggerFactory.getLogger("EclipseBot");
+    private final YamlService yamlService;
+    private JDA jda;
 
-    public void info(String source, String message) {
-        coreLog.info("[{}] {}", source, message);
+    public LoggerService(@Lazy YamlService yamlService) {
+        this.yamlService = yamlService;
     }
 
-    public void warn(String source, String message) {
-        coreLog.warn("[{}] ⚠️ {}", source, message);
+    @PostConstruct
+    public void init() {
+        info("🔧 LoggerService initialized", getClass().toString());
     }
 
-    public void error(String source, String message) {
-        coreLog.error("[{}] ❌ {}", source, message);
+    public void setJDA(JDA jda) {
+        this.jda = jda;
     }
 
-    public void error(String source, String message, Throwable e) {
-        coreLog.error("[{}] ❌ {} — exception:", source, message, e);
+    public void info(String msg, String source) {
+        log("INFO", msg, source, null);
     }
 
-    public void debug(String source, String message) {
-        coreLog.debug("[{}] 🐞 {}", source, message);
+    public void warn(String msg, String source) {
+        log("WARN", msg, source, null);
     }
 
-    // Convenience methods (default to "General")
-    public void info(String message) {
-        info("General", message);
+    public void error(String msg, String source, Throwable t) {
+        log("ERROR", msg, source, t);
     }
 
-    public void warn(String message) {
-        warn("General", message);
+    public void success(String msg, String source) {
+        log("SUCCESS", msg, source, null);
     }
 
-    public void error(String message) {
-        error("General", message);
-    }
+    private void log(String level, String msg, String source, Throwable t) {
+        System.out.printf("[%s] %s — %s%n", level, source, msg);
+        if (t != null) t.printStackTrace();
 
-    public void error(String message, Throwable e) {
-        error("General", message, e);
-    }
-
-    public void debug(String message) {
-        debug("General", message);
+        // Optional: mirror to Discord log channel if JDA is ready
+        if (jda != null && yamlService != null) {
+            String channelId = yamlService.getString("logChannelId");
+            if (channelId != null) {
+                MessageChannel channel = jda.getTextChannelById(channelId);
+                if (channel != null) {
+                    channel.sendMessage(String.format("`[%s]` %s", level, msg)).queue();
+                }
+            }
+        }
     }
 }
