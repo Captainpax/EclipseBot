@@ -5,7 +5,6 @@ import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
-import net.dv8tion.jda.api.interactions.components.ActionRow;
 import net.dv8tion.jda.api.interactions.components.ItemComponent;
 import net.dv8tion.jda.api.interactions.components.LayoutComponent;
 import net.dv8tion.jda.api.interactions.components.buttons.Button;
@@ -45,7 +44,7 @@ public class MessageBuilder {
         buttonHandlers.add(new ButtonHandler(id, onClick));
     }
 
-    public void withDropdown(String id, List<String> options, Consumer<DropdownEvent> onSelect) {
+    public void withDropdown(String id, List<SelectOption> options, Consumer<DropdownEvent> onSelect) {
         if (id == null || options == null || onSelect == null || options.isEmpty()) return;
 
         List<SelectOption> menuOptions = options.stream()

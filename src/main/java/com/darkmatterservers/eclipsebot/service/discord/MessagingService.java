@@ -3,6 +3,7 @@ package com.darkmatterservers.eclipsebot.service.discord;
 import com.darkmatterservers.eclipsebot.service.LoggerService;
 import com.darkmatterservers.eclipsebot.service.config.YamlService;
 import com.darkmatterservers.eclipsebot.service.discord.builders.MessageBuilder;
+import com.darkmatterservers.eclipsebot.service.discord.builders.MessageBuilder.DropdownEvent;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import net.dv8tion.jda.api.JDA;
@@ -76,8 +77,9 @@ public class MessagingService {
 
         messageBuilder.clearButtons();
 
-        messageBuilder.withDropdown("select_guild", "Select a Guild to Setup", getEligibleGuildOptions(jda, adminId), event -> {
-            String guildId = event.selected();
+        List<SelectOption> guildOptions = getEligibleGuildOptions(jda, adminId);
+        messageBuilder.withDropdown("select_guild", guildOptions, event -> {
+            String guildId = event.selectedValues().get(0);
             Guild guild = jda.getGuildById(guildId);
             if (guild == null) {
                 event.reply("❌ Guild not found or bot is no longer in that server.");
@@ -128,7 +130,7 @@ public class MessagingService {
     }
 
     private void logMessageDetails(String target, String message) {
-        List<String> buttonIds = messageBuilder.getHandlers().stream()
+        List<String> buttonIds = messageBuilder.getButtonHandlers().stream()
                 .map(handler -> handler.id())
                 .toList();
 
