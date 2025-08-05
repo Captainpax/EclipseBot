@@ -6,30 +6,26 @@ import com.darkmatterservers.eclipsebot.service.discord.builders.MessageBuilder;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.Permission;
+import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
+import net.dv8tion.jda.api.interactions.components.selections.SelectOption;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
-/**
- * MessagingService provides centralized control over all incoming/outgoing Discord messages,
- * including logging, formatting, DM handling, and future analytics or moderation capabilities.
- *
- * Responsibilities:
- * ✅ Logs and tracks all messages
- * ✅ Handles private and public message context
- * ✅ Sends standardized formatted messages
- * ✅ Delegates to MessageBuilder for interactive UI (buttons)
- */
 @Service
 public class MessagingService {
 
     private final LoggerService logger;
     private final MessageBuilder messageBuilder;
+    private final AtomicReference<JDA> jdaRef;
 
     public MessagingService(
             LoggerService logger,
@@ -39,11 +35,9 @@ public class MessagingService {
     ) {
         this.logger = logger;
         this.messageBuilder = messageBuilder;
+        this.jdaRef = jdaRef;
     }
 
-    /**
-     * Logs all incoming messages from users for moderation or debugging purposes.
-     */
     public void trackIncomingMessage(@NotNull MessageReceivedEvent event) {
         Message message = event.getMessage();
         User author = event.getAuthor();
@@ -68,29 +62,44 @@ public class MessagingService {
         logger.info(summary, String.valueOf(getClass()));
     }
 
-    /**
-     * Greets the admin user with a DM that includes buttons.
-     */
     public void greetAdminOnStartup(String adminId) {
         if (adminId == null || adminId.isBlank()) {
             logger.warn("Admin ID not set — skipping startup greeting.", String.valueOf(getClass()));
             return;
         }
 
-        messageBuilder.clearButtons(); // Clears buttons (not handlers)
+        JDA jda = jdaRef.get();
+        if (jda == null) {
+            logger.error("❌ JDA not initialized — cannot send startup DM.", String.valueOf(getClass()));
+            return;
+        }
 
-        messageBuilder.with("setup_wizard", "Setup Wizard", event -> {
-            String user = event.raw().getUser().getAsTag();
-            logger.info("🧪 Setup Wizard button triggered by " + user, String.valueOf(getClass()));
-            event.reply("🧙 Coming soon: Setup Wizard flow will guide you through configuration.");
+        messageBuilder.clearButtons();
+
+        messageBuilder.withDropdown("select_guild", "Select a Guild to Setup", getEligibleGuildOptions(jda, adminId), event -> {
+            String guildId = event.selected();
+            Guild guild = jda.getGuildById(guildId);
+            if (guild == null) {
+                event.reply("❌ Guild not found or bot is no longer in that server.");
+                return;
+            }
+
+            String stats = "📊 Guild Info for **" + guild.getName() + "**\n" +
+                    "• ID: ``" + guild.getId() + "``\n" +
+                    "• Owner: ``" + guild.getOwnerId() + "``\n" +
+                    "• Member Count: " + guild.getMemberCount() + "\n" +
+                    "• Channels: " + guild.getChannels().size() + "\n" +
+                    "• Roles: " + guild.getRoles().size();
+
+            event.reply(stats);
         });
 
         String message = messageBuilder.format(
                 "👋 EclipseBot Started",
                 """
                 Hello! I'm **EclipseBot**, your assistant for managing Archipelago servers on Discord.
-    
-                Click the **Setup Wizard** button below to begin configuring roles, channels, and permissions.
+
+                Use the dropdown below to choose a server where you are an **admin** or **owner** and EclipseBot is present.
                 """
         );
 
@@ -98,28 +107,29 @@ public class MessagingService {
         messageBuilder.sendPrivateMessage(adminId, message);
     }
 
-    /**
-     * Sends a message to a user and logs detailed delivery info.
-     */
+    private List<SelectOption> getEligibleGuildOptions(JDA jda, String adminId) {
+        return jda.getGuilds().stream()
+                .filter(guild -> {
+                    Member member = guild.getMemberById(adminId);
+                    return member != null && (member.isOwner() || member.hasPermission(Permission.ADMINISTRATOR));
+                })
+                .map(guild -> SelectOption.of(guild.getName(), guild.getId()))
+                .toList();
+    }
+
     public void dmUser(String userId, String content) {
         logger.info("📨 DM to user [" + userId + "]", String.valueOf(getClass()));
         logMessageDetails(userId, content);
         messageBuilder.sendPrivateMessage(userId, content);
     }
 
-    /**
-     * Formats a standard message (e.g., for embeds or multi-line replies).
-     */
     public String format(String header, String body) {
         return messageBuilder.format(header, body);
     }
 
-    /**
-     * Prints detailed log of outgoing message, including buttons and content.
-     */
     private void logMessageDetails(String target, String message) {
         List<String> buttonIds = messageBuilder.getHandlers().stream()
-                .map(MessageBuilder.ButtonHandler::id)
+                .map(handler -> handler.id())
                 .toList();
 
         String attachments = buttonIds.isEmpty()
