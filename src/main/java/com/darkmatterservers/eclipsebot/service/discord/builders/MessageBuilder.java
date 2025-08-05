@@ -5,11 +5,13 @@ import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
+import net.dv8tion.jda.api.interactions.components.ActionRow;
 import net.dv8tion.jda.api.interactions.components.ItemComponent;
-import net.dv8tion.jda.api.interactions.components.LayoutComponent;
+import net.dv8tion.jda.api.interactions.components.ActionRow;
 import net.dv8tion.jda.api.interactions.components.buttons.Button;
 import net.dv8tion.jda.api.interactions.components.selections.SelectOption;
 import net.dv8tion.jda.api.interactions.components.selections.StringSelectMenu;
+import net.dv8tion.jda.api.requests.restaction.MessageCreateAction;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -46,12 +48,7 @@ public class MessageBuilder {
 
     public void withDropdown(String id, List<SelectOption> options, Consumer<DropdownEvent> onSelect) {
         if (id == null || options == null || onSelect == null || options.isEmpty()) return;
-
-        List<SelectOption> menuOptions = options.stream()
-                .map(opt -> SelectOption.of(opt, opt))
-                .toList();
-
-        dropdowns.add(StringSelectMenu.create(id).addOptions(menuOptions).build());
+        dropdowns.add(StringSelectMenu.create(id).addOptions(options).build());
         dropdownHandlers.add(new DropdownHandler(id, onSelect));
     }
 
@@ -76,20 +73,24 @@ public class MessageBuilder {
         }
 
         jda.retrieveUserById(userId).queue(user -> user.openPrivateChannel().queue(channel -> {
-            var message = channel.sendMessage(content);
-            List<LayoutComponent> components = new ArrayList<>();
+            MessageCreateAction messageAction = channel.sendMessage(content);
+
+            // Build list of ActionRows from buttons and dropdowns
+            List<ActionRow> actionRows = new ArrayList<>();
 
             if (!buttons.isEmpty()) {
-                components.addAll((Collection<? extends LayoutComponent>) buttons);
-            }
-            if (!dropdowns.isEmpty()) {
-                components.add((LayoutComponent) dropdowns.get(0));
+                actionRows.add(ActionRow.of(buttons));
             }
 
-            if (!components.isEmpty()) {
-                message.addActionRow((Collection<? extends ItemComponent>) components).queue();
+            if (!dropdowns.isEmpty()) {
+                actionRows.add(ActionRow.of(dropdowns.get(0)));
+            }
+
+            // Apply action rows and send the message
+            if (!actionRows.isEmpty()) {
+                messageAction.addComponents(actionRows).queue();
             } else {
-                message.queue();
+                messageAction.queue();
             }
 
             System.out.println("✅ Sent DM with components to user: " + user.getAsTag());
@@ -149,6 +150,7 @@ public class MessageBuilder {
         public StringSelectInteractionEvent raw() { return event; }
         public void reply(String message) { event.reply(message).setEphemeral(true).queue(); }
         public List<String> selectedValues() { return event.getValues(); }
+        public String selected() { return event.getValues().isEmpty() ? null : event.getValues().get(0); }
         public User user() { return event.getUser(); }
     }
 }
