@@ -79,7 +79,7 @@ public class MessagingService {
 
         List<SelectOption> guildOptions = getEligibleGuildOptions(jda, adminId);
         messageBuilder.withDropdown("select_guild", guildOptions, event -> {
-            String guildId = event.selectedValues().get(0);
+            String guildId = event.selectedValues().getFirst();
             Guild guild = jda.getGuildById(guildId);
             if (guild == null) {
                 event.reply("❌ Guild not found or bot is no longer in that server.");
