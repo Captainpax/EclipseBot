@@ -40,9 +40,6 @@ public class YamlService {
         load();
     }
 
-    /**
-     * Loads config.yaml into memory.
-     */
     public void load() {
         File file = new File(CONFIG_FILE);
 
@@ -67,16 +64,10 @@ public class YamlService {
         }
     }
 
-    /**
-     * Saves current in-memory configMap to config.yaml
-     */
     public void save() {
         saveToFile(CONFIG_FILE, configMap);
     }
 
-    /**
-     * Writes arbitrary data to a YAML file.
-     */
     public void saveToFile(String filePath, Map<String, Object> data) {
         try (FileWriter writer = new FileWriter(filePath)) {
             yaml.dump(data, writer);
@@ -84,14 +75,6 @@ public class YamlService {
         } catch (IOException e) {
             logger.error("❌ Failed to save YAML config: " + e.getMessage(), getClass().toString());
         }
-    }
-
-    /**
-     * Get a nested config value by dot-path (e.g., "discord.token")
-     */
-    public String getString(String path) {
-        Object value = get(path);
-        return value != null ? String.valueOf(value) : null;
     }
 
     public Object get(String path) {
@@ -113,9 +96,11 @@ public class YamlService {
         return value;
     }
 
-    /**
-     * Set a nested value using a dot-path (e.g., "discord.token") and create structure if needed
-     */
+    public String getString(String path) {
+        Object value = get(path);
+        return value != null ? String.valueOf(value) : null;
+    }
+
     public void set(String path, Object value) {
         if (configMap == null || configMap.isEmpty()) {
             load();
@@ -152,9 +137,6 @@ public class YamlService {
         return configMap;
     }
 
-    /**
-     * Merges defaultMap with overrideMap (override wins), recursively
-     */
     public Map<String, Object> deepMerge(Map<String, Object> defaultMap, Map<String, Object> overrideMap) {
         Map<String, Object> result = new LinkedHashMap<>(defaultMap);
 
@@ -177,9 +159,6 @@ public class YamlService {
         return result;
     }
 
-    /**
-     * Safely casts a generic map to Map<String, Object>
-     */
     @SuppressWarnings("unchecked")
     private Map<String, Object> castToStringObjectMap(Object obj) {
         try {

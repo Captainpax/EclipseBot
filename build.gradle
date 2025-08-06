@@ -1,60 +1,70 @@
 plugins {
-	id 'java'
-	id 'org.springframework.boot' version '3.5.4'
-	id 'io.spring.dependency-management' version '1.1.7'
+    id 'java'
+    id 'org.springframework.boot' version '3.2.4'
+    id 'io.spring.dependency-management' version '1.1.4'
+    id 'com.github.johnrengelman.shadow' version '8.1.1' // ✅ Shadow plugin
 }
 
 group = 'com.darkmatterservers'
 version = '0.1.3'
 
 java {
-	toolchain {
-		languageVersion = JavaLanguageVersion.of(21)
-	}
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
 }
 
 configurations {
-	compileOnly {
-		extendsFrom annotationProcessor
-	}
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
 }
 
 repositories {
-	mavenCentral()
+    mavenLocal()
+    mavenCentral()
 }
 
 dependencies {
-	// ✅ Spring Boot Web
-	implementation 'org.springframework.boot:spring-boot-starter-web'
+    // ✅ Spring Boot Web
+    implementation 'org.springframework.boot:spring-boot-starter-web'
 
-    //Discord
+    // ✅ Discord
     implementation 'net.dv8tion:JDA:5.6.1'
 
-	// 🧰 Lombok
-	compileOnly 'org.projectlombok:lombok'
-	annotationProcessor 'org.projectlombok:lombok'
+    // ✅ EclipseBytes from local Maven
+    implementation 'com.darkmatterservers:EclipseBytes:1.0-SNAPSHOT'
 
-	// 🧪 Testing
-	testImplementation 'org.springframework.boot:spring-boot-starter-test'
-	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    // ✅ Lombok
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+
+    // ✅ Testing
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 // ✅ Use JUnit Platform
 tasks.named('test') {
-	useJUnitPlatform()
+    useJUnitPlatform()
 }
 
-// ✅ Package as fat JAR (Spring Boot handles classpath)
-springBoot {
-	mainClass = 'com.darkmatterservers.eclipsebot.EclipseBotApplication'
-}
-
-// ✅ Create only the fat jar with the right name
+// ✅ Disable Spring Boot’s fat jar (bootJar)
 tasks.named('bootJar') {
-	archiveFileName.set("EclipseBot-${version}.jar")
+    enabled = false
 }
 
-// ❌ Disable unused plain jar
+// ✅ Enable Shadow JAR
 tasks.named('jar') {
-	enabled = false
+    enabled = true
+}
+
+tasks.named('shadowJar') {
+    archiveFileName.set("EclipseBot-${version}-all.jar")
+    mergeServiceFiles() // Handles Spring service resources
+    manifest {
+        attributes(
+                'Main-Class': 'com.darkmatterservers.eclipsebot.EclipseBotApplication'
+        )
+    }
 }

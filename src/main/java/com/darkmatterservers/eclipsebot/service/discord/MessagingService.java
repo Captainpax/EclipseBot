@@ -2,8 +2,6 @@ package com.darkmatterservers.eclipsebot.service.discord;
 
 import com.darkmatterservers.eclipsebot.service.LoggerService;
 import com.darkmatterservers.eclipsebot.service.config.YamlService;
-import com.darkmatterservers.eclipsebot.service.discord.builders.MessageBuilder;
-import com.darkmatterservers.eclipsebot.service.discord.builders.MessageBuilder.DropdownEvent;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import net.dv8tion.jda.api.JDA;
@@ -19,23 +17,19 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
 
 @Service
 public class MessagingService {
 
     private final LoggerService logger;
-    private final MessageBuilder messageBuilder;
     private final AtomicReference<JDA> jdaRef;
 
     public MessagingService(
             LoggerService logger,
             AtomicReference<JDA> jdaRef,
-            MessageBuilder messageBuilder,
             YamlService yamlService
     ) {
         this.logger = logger;
-        this.messageBuilder = messageBuilder;
         this.jdaRef = jdaRef;
     }
 
@@ -75,28 +69,9 @@ public class MessagingService {
             return;
         }
 
-        messageBuilder.clearButtons();
-
         List<SelectOption> guildOptions = getEligibleGuildOptions(jda, adminId);
-        messageBuilder.withDropdown("select_guild", guildOptions, event -> {
-            String guildId = event.selectedValues().getFirst();
-            Guild guild = jda.getGuildById(guildId);
-            if (guild == null) {
-                event.reply("❌ Guild not found or bot is no longer in that server.");
-                return;
-            }
 
-            String stats = "📊 Guild Info for **" + guild.getName() + "**\n" +
-                    "• ID: ``" + guild.getId() + "``\n" +
-                    "• Owner: ``" + guild.getOwnerId() + "``\n" +
-                    "• Member Count: " + guild.getMemberCount() + "\n" +
-                    "• Channels: " + guild.getChannels().size() + "\n" +
-                    "• Roles: " + guild.getRoles().size();
-
-            event.reply(stats);
-        });
-
-        String message = messageBuilder.format(
+        String message = format(
                 "👋 EclipseBot Started",
                 """
                 Hello! I'm **EclipseBot**, your assistant for managing Archipelago servers on Discord.
@@ -105,8 +80,30 @@ public class MessagingService {
                 """
         );
 
-        logMessageDetails(adminId, message);
-        messageBuilder.sendPrivateMessage(adminId, message);
+        logMessageDetails(adminId, message, guildOptions);
+        EclipseBytes.sendPrivateDropdown(
+                adminId,
+                message,
+                "select_guild",
+                guildOptions,
+                event -> {
+                    String guildId = event.selectedValues().getFirst();
+                    Guild guild = jda.getGuildById(guildId);
+                    if (guild == null) {
+                        event.reply("❌ Guild not found or bot is no longer in that server.");
+                        return;
+                    }
+
+                    String stats = "📊 Guild Info for **" + guild.getName() + "**\n" +
+                            "• ID: ``" + guild.getId() + "``\n" +
+                            "• Owner: ``" + guild.getOwnerId() + "``\n" +
+                            "• Member Count: " + guild.getMemberCount() + "\n" +
+                            "• Channels: " + guild.getChannels().size() + "\n" +
+                            "• Roles: " + guild.getRoles().size();
+
+                    event.reply(stats);
+                }
+        );
     }
 
     private List<SelectOption> getEligibleGuildOptions(JDA jda, String adminId) {
@@ -121,26 +118,22 @@ public class MessagingService {
 
     public void dmUser(String userId, String content) {
         logger.info("📨 DM to user [" + userId + "]", String.valueOf(getClass()));
-        logMessageDetails(userId, content);
-        messageBuilder.sendPrivateMessage(userId, content);
+        logMessageDetails(userId, content, null);
+        EclipseBytes.sendPrivateMessage(userId, content);
     }
 
     public String format(String header, String body) {
-        return messageBuilder.format(header, body);
+        return "**" + header + "**\n\n" + body;
     }
 
-    private void logMessageDetails(String target, String message) {
-        List<String> buttonIds = messageBuilder.getButtonHandlers().stream()
-                .map(handler -> handler.id())
-                .toList();
-
-        String attachments = buttonIds.isEmpty()
-                ? "none"
-                : "buttons=" + buttonIds;
-
+    private void logMessageDetails(String target, String message, List<SelectOption> options) {
         logger.info("📦 Outgoing message [DM] → " + target, String.valueOf(getClass()));
         logger.info("📝 Content:\n" + message, String.valueOf(getClass()));
-        logger.info("📎 Attachments: " + attachments, String.valueOf(getClass()));
+        if (options != null && !options.isEmpty()) {
+            logger.info("📎 Attachments: dropdown=" + options.size(), String.valueOf(getClass()));
+        } else {
+            logger.info("📎 Attachments: none", String.valueOf(getClass()));
+        }
     }
 
     @PreDestroy

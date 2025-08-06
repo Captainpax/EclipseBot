@@ -2,8 +2,6 @@ package com.darkmatterservers.eclipsebot.service.discord;
 
 import com.darkmatterservers.eclipsebot.service.LoggerService;
 import com.darkmatterservers.eclipsebot.service.config.YamlService;
-import com.darkmatterservers.eclipsebot.service.discord.builders.MessageBuilder;
-import com.darkmatterservers.eclipsebot.service.discord.listeners.ButtonListener;
 import jakarta.annotation.PreDestroy;
 import lombok.Getter;
 import net.dv8tion.jda.api.JDA;
@@ -27,7 +25,6 @@ public class DiscordService {
     private final YamlService yamlService;
     private final MessagingService messagingService;
     private final AtomicReference<JDA> jdaRef;
-    private final ButtonListener buttonListener;
 
     private String token;
     private String botId;
@@ -42,15 +39,12 @@ public class DiscordService {
             LoggerService logger,
             YamlService yamlService,
             MessagingService messagingService,
-            MessageBuilder messageBuilder,
-            AtomicReference<JDA> jdaRef,
-            ButtonListener buttonListener
+            AtomicReference<JDA> jdaRef
     ) {
         this.logger = logger;
         this.yamlService = yamlService;
         this.messagingService = messagingService;
         this.jdaRef = jdaRef;
-        this.buttonListener = buttonListener;
 
         this.token = yamlService.getString("discord.token");
         this.botId = yamlService.getString("discord.botId");
@@ -89,13 +83,10 @@ public class DiscordService {
                     .awaitReady();
 
             jdaRef.set(jda);         // Global access
-            logger.setJDA(jda);      // Log to Discord if enabled
+            logger.setJDA(jda);      // Enable Discord logging
             running = true;
 
             logger.success("✅ Discord bot is online as " + jda.getSelfUser().getAsTag(), String.valueOf(getClass()));
-
-            jda.addEventListener(buttonListener);
-            logger.info("✅ ButtonListener registered with JDA", String.valueOf(getClass()));
 
             if (adminId != null && !adminId.isBlank()) {
                 messagingService.greetAdminOnStartup(adminId);

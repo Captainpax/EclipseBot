@@ -7,13 +7,13 @@ import org.springframework.context.annotation.Configuration;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Configuration
-public class DiscordBeansConfig {
+public class AppBeansConfig {
 
     /**
-     * A mutable holder for JDA to be set after Discord login.
+     * Provides a globally accessible, thread-safe reference to the active JDA instance.
      */
     @Bean
-    public AtomicReference<JDA> jdaReference() {
+    public AtomicReference<JDA> jdaRef() {
         return new AtomicReference<>();
     }
 }
