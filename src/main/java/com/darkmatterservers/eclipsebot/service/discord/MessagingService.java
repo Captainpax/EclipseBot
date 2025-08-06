@@ -10,6 +10,7 @@ import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.User;
+import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.interactions.components.selections.SelectOption;
 import org.jetbrains.annotations.NotNull;
@@ -23,14 +24,17 @@ public class MessagingService {
 
     private final LoggerService logger;
     private final AtomicReference<JDA> jdaRef;
+    private final Bytes bytes;
 
     public MessagingService(
             LoggerService logger,
             AtomicReference<JDA> jdaRef,
-            YamlService yamlService
+            YamlService yamlService,
+            Bytes bytes
     ) {
         this.logger = logger;
         this.jdaRef = jdaRef;
+        this.bytes = bytes;
     }
 
     public void trackIncomingMessage(@NotNull MessageReceivedEvent event) {
@@ -71,7 +75,7 @@ public class MessagingService {
 
         List<SelectOption> guildOptions = getEligibleGuildOptions(jda, adminId);
 
-        String message = format(
+        String message = Bytes.format(
                 "👋 EclipseBot Started",
                 """
                 Hello! I'm **EclipseBot**, your assistant for managing Archipelago servers on Discord.
@@ -81,28 +85,31 @@ public class MessagingService {
         );
 
         logMessageDetails(adminId, message, guildOptions);
-        EclipseBytes.sendPrivateDropdown(
-                adminId,
-                message,
-                "select_guild",
-                guildOptions,
-                event -> {
-                    String guildId = event.selectedValues().getFirst();
-                    Guild guild = jda.getGuildById(guildId);
-                    if (guild == null) {
-                        event.reply("❌ Guild not found or bot is no longer in that server.");
-                        return;
-                    }
 
-                    String stats = "📊 Guild Info for **" + guild.getName() + "**\n" +
-                            "• ID: ``" + guild.getId() + "``\n" +
-                            "• Owner: ``" + guild.getOwnerId() + "``\n" +
-                            "• Member Count: " + guild.getMemberCount() + "\n" +
-                            "• Channels: " + guild.getChannels().size() + "\n" +
-                            "• Roles: " + guild.getRoles().size();
+        bytes.sendPrivateDropdown(
+            adminId,
+            message,
+            "select_guild",
+            guildOptions,
+            ctx -> {
+                String guildId = ctx.getString("value");
+                StringSelectInteractionEvent rawEvent = (StringSelectInteractionEvent) ctx.get("rawEvent");
 
-                    event.reply(stats);
+                Guild guild = jda.getGuildById(guildId);
+                if (guild == null) {
+                    rawEvent.reply("❌ Guild not found or bot is no longer in that server.").queue();
+                    return;
                 }
+
+                String stats = "📊 Guild Info for **" + guild.getName() + "**\n" +
+                        "• ID: ``" + guild.getId() + "``\n" +
+                        "• Owner: ``" + guild.getOwnerId() + "``\n" +
+                        "• Member Count: " + guild.getMemberCount() + "\n" +
+                        "• Channels: " + guild.getChannels().size() + "\n" +
+                        "• Roles: " + guild.getRoles().size();
+
+                rawEvent.reply(stats).queue();
+            }
         );
     }
 
@@ -119,11 +126,7 @@ public class MessagingService {
     public void dmUser(String userId, String content) {
         logger.info("📨 DM to user [" + userId + "]", String.valueOf(getClass()));
         logMessageDetails(userId, content, null);
-        EclipseBytes.sendPrivateMessage(userId, content);
-    }
-
-    public String format(String header, String body) {
-        return "**" + header + "**\n\n" + body;
+        bytes.sendPrivateMessage(userId, content);
     }
 
     private void logMessageDetails(String target, String message, List<SelectOption> options) {
