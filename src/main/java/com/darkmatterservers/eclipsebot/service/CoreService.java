@@ -11,9 +11,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * Handles the application startup and config bootstrapping.
- */
 @Service
 public class CoreService {
 
@@ -39,9 +36,6 @@ public class CoreService {
         this.jdaRef = jdaRef;
     }
 
-    /**
-     * Starts the core service and initializes the bot if config is valid.
-     */
     public void start() {
         logger.info("🚀 Starting CoreService...");
 
@@ -56,24 +50,25 @@ public class CoreService {
             logger.warn("🛠 config.yaml not found or empty — creating from defaults", getClass().toString());
             yamlService.saveToFile(CONFIG_PATH, mergedConfig);
             logger.info("📄 config.yaml created. Please review and restart the application.");
-            return;
         } else {
             logger.info("📁 config.yaml found — ensuring all required fields are present");
             yamlService.saveToFile(CONFIG_PATH, mergedConfig);
         }
 
-        // Validate discord credentials
+        // Always launch Discord service so we can contact the admin
         String token = yamlService.getString("discord.token");
         String botId = yamlService.getString("discord.botId");
 
-        if (token == null || token.contains("your-token-here") || botId == null || botId.contains("your-bot-id-here")) {
-            logger.error("❌ Discord token or botId is invalid. Please update config.yaml.", getClass().toString());
-            return;
+        boolean configInvalid = token == null || token.contains("your-token-here")
+                || botId == null || botId.contains("your-bot-id-here");
+
+        if (configInvalid) {
+            logger.warn("⚠️ Discord token or botId missing/placeholder — continuing into setup mode.", getClass().toString());
+        } else {
+            logger.info("✅ config.yaml verified. Launching DiscordService...");
         }
 
-        logger.info("✅ config.yaml verified. Launching DiscordService...");
-
-        JDA jda = discordService.start(); // Updated to return JDA
+        JDA jda = discordService.start(); // Always attempt to start DiscordService
         if (jda != null) {
             jdaRef.set(jda);
             logger.success("🤖 JDA is ready and reference set.", getClass().toString());
@@ -104,9 +99,6 @@ public class CoreService {
         return merged;
     }
 
-    /**
-     * Keeps the main thread alive indefinitely.
-     */
     public void blockIndefinitely() {
         try {
             Thread.currentThread().join();

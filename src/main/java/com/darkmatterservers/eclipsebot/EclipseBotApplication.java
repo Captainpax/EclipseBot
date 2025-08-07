@@ -2,6 +2,7 @@ package com.darkmatterservers.eclipsebot;
 
 import com.darkmatterservers.eclipsebot.service.CoreService;
 import com.darkmatterservers.eclipsebot.service.LoggerService;
+import com.darkmatterservers.eclipsebot.service.config.YamlService;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.ConfigurableApplicationContext;
@@ -20,9 +21,22 @@ public class EclipseBotApplication {
 
             logger = context.getBean(LoggerService.class);
             CoreService coreService = context.getBean(CoreService.class);
+            YamlService yamlService = context.getBean(YamlService.class);
 
-            logger.success("Startup", "✅ EclipseBot started successfully.");
+            logger.info("System", "✅ EclipseBotApplication started");
+
+            // Prevent shutdown if token/adminId/etc. were already set
+            boolean configValid = yamlService.getString("discord.token") != null &&
+                    yamlService.getString("discord.adminId") != null &&
+                    yamlService.getString("discord.botId") != null;
+
+            if (!configValid) {
+                logger.warn("System", "⚠️ Config missing required fields — falling back to CoreService.setup()");
+            }
+
             coreService.start();
+
+            logger.success("Startup", "🎉 EclipseBot is up and running.");
 
         } catch (Exception e) {
             if (logger != null) {

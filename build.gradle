@@ -33,7 +33,7 @@ dependencies {
     implementation 'net.dv8tion:JDA:5.6.1'
 
     // ✅ EclipseBytes from local Maven
-    implementation 'com.darkmatterservers:eclipsebytes:1.0.0'
+    implementation 'com.darkmatterservers:eclipsebytes:1.0.1'
 
     // ✅ Lombok
     compileOnly 'org.projectlombok:lombok'

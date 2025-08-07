@@ -129,6 +129,13 @@ public class YamlService {
         save();
     }
 
+    public void put(String path, Map<String, Object> map) {
+        if (map == null) return;
+        for (Map.Entry<String, Object> entry : map.entrySet()) {
+            set(path + "." + entry.getKey(), entry.getValue());
+        }
+    }
+
     public void setMultiple(Map<String, Object> updates) {
         for (Map.Entry<String, Object> entry : updates.entrySet()) {
             set(entry.getKey(), entry.getValue());
