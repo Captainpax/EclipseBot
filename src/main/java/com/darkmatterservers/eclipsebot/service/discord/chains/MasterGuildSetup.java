@@ -2,13 +2,17 @@ package com.darkmatterservers.eclipsebot.service.discord.chains;
 
 import com.darkmatterservers.builder.Buttons;
 import com.darkmatterservers.builder.Dropdowns;
-import com.darkmatterservers.builder.PageRenderer;
 import com.darkmatterservers.chain.Page;
 import com.darkmatterservers.chain.PagedChain;
 import com.darkmatterservers.context.ComponentContext;
 import com.darkmatterservers.eclipsebot.service.LoggerService;
 import com.darkmatterservers.eclipsebot.service.config.YamlService;
 import com.darkmatterservers.eclipsebot.service.discord.Bytes;
+import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.Permission;
+import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.Role;
+import net.dv8tion.jda.api.entities.channel.concrete.Category;
 import net.dv8tion.jda.api.interactions.components.selections.SelectOption;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
@@ -16,16 +20,18 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 /**
- * MasterGuildSetup — PagedChain version
- *
- * Flow (4 uniform pages as requested):
+ * MasterGuildSetup — PagedChain version with dynamic roles/categories
+ * <p>
+ * Flow (4 uniform pages):
  *  1) Welcome (Next)
  *  2) Pick Server (dropdown + Back/Next)
  *  3) Pick Roles (Mods/Players/Create + Back/Next + Role dropdown)
  *  4) Pick Admin Category (Create + Back/Done + Category dropdown)
- *
+ * <p>
  * Handlers persist user choices in ComponentContext, and on Done we save to YAML.
  */
 @Component
@@ -45,13 +51,16 @@ public class MasterGuildSetup {
     private final Bytes bytes;
     private final YamlService yamlService;
     private final LoggerService logger;
+    private final AtomicReference<JDA> jdaRef;
 
     public MasterGuildSetup(Bytes bytes,
                             @Lazy YamlService yamlService,
-                            LoggerService logger) {
+                            LoggerService logger,
+                            AtomicReference<JDA> jdaRef) {
         this.bytes = bytes;
         this.yamlService = yamlService;
         this.logger = logger;
+        this.jdaRef = jdaRef;
     }
 
     // -------------------------- Public API --------------------------
@@ -65,27 +74,14 @@ public class MasterGuildSetup {
             guildValues.add(opt.getValue());
         });
 
-        // Build the chain with initial dropdown options
-        var chain = buildChain(guildLabels, guildValues,
-                List.of("Mods", "Players", "Admin"), // placeholder roles (replace with real list per guild later)
-                List.of("Admin Panel", "Logs", "General") // placeholder categories
+        // Build the chain with initial dropdown options (roles/categories will refresh after guild select)
+        var chain = buildChain(guildLabels,
+                guildValues,
+                List.of(), // roles placeholder; replaced on guild selection
+                List.of()  // categories placeholder; replaced on guild selection
         );
 
-        // Seed context with mapping from label->value for server selection, so we can persist guildId
-        var ctx = new ComponentContext(userId);
-        for (int i = 0; i < guildLabels.size(); i++) {
-            ctx.put("server.label." + i, guildLabels.get(i));
-            ctx.put("server.value." + i, guildValues.get(i));
-        }
-
         // Start the chain in DMs
-        bytes.startDmPagedChain(userId, chain);
-    }
-
-    /** Convenience: Start the wizard with simple string lists. */
-    public void start(String userId, List<String> guildNames, List<String> guildIds,
-                      List<String> rolesInGuild, List<String> categoriesInGuild) {
-        var chain = buildChain(guildNames, guildIds, rolesInGuild, categoriesInGuild);
         bytes.startDmPagedChain(userId, chain);
     }
 
@@ -127,7 +123,6 @@ public class MasterGuildSetup {
                 .withButton(3, Buttons.done())
                 .withDropdown(Dropdowns.dropdown(ID_DD_CATEGORY, "Pick a Category", categoriesInGuild));
 
-        // Build chain + wire handlers
         return new PagedChain.Builder()
                 .chainId(CHAIN_TITLE)
                 .addPage(p0)
@@ -139,11 +134,19 @@ public class MasterGuildSetup {
                 // Dropdown handlers
                 .on(ID_DD_SERVER, ctx -> {
                     String selectedLabel = ctx.interactionValue();
-                    // Find matching label index and store the real guildId (value)
-                    String guildId = mapLabelToValue(ctx, selectedLabel);
-                    if (guildId != null) {
-                        ctx.put("guildId", guildId);
-                        ctx.put("guildName", selectedLabel);
+                    String guildId = mapLabelToValue(selectedLabel, guildNames, guildIds);
+                    if (guildId == null) return;
+
+                    ctx.put("guildId", guildId);
+                    ctx.put("guildName", selectedLabel);
+
+                    // Refresh roles/categories from JDA for this guild and update dropdowns in-place
+                    try {
+                        var data = fetchGuildData(guildId);
+                        ctx.put("roles.options", data.roles());
+                        ctx.put("categories.options", data.categories());
+                    } catch (Exception e) {
+                        logger.warn("⚠️ Failed to refresh guild data for " + guildId + ": " + e.getMessage(), getClass().getName());
                     }
                 })
                 .on(ID_DD_ROLES, ctx -> {
@@ -191,7 +194,6 @@ public class MasterGuildSetup {
                     "adminCategory", adminCategory
             );
 
-            // Persist under guild key; adjust to your desired shape
             yamlService.put("guilds." + guildId, config);
             yamlService.save();
 
@@ -204,14 +206,32 @@ public class MasterGuildSetup {
         }
     }
 
-    private String mapLabelToValue(ComponentContext ctx, String selectedLabel) {
+    // -------------------------- Helpers --------------------------
+
+    private record GuildData(List<String> roles, List<String> categories) {}
+
+    private GuildData fetchGuildData(String guildId) {
+        JDA jda = jdaRef.get();
+        if (jda == null) return new GuildData(List.of(), List.of());
+        Guild guild = jda.getGuildById(guildId);
+        if (guild == null) return new GuildData(List.of(), List.of());
+
+        List<String> roles = guild.getRoles().stream()
+                .filter(r -> !r.isManaged())
+                .map(Role::getName)
+                .collect(Collectors.toList());
+
+        List<String> categories = guild.getCategories().stream()
+                .map(Category::getName)
+                .collect(Collectors.toList());
+
+        return new GuildData(roles, categories);
+    }
+
+    private String mapLabelToValue(String selectedLabel, List<String> labels, List<String> values) {
         if (selectedLabel == null) return null;
-        // Walk stored label/value pairs to find the id
-        for (int i = 0; ; i++) {
-            String label = ctx.getString("server.label." + i);
-            String value = ctx.getString("server.value." + i);
-            if (label == null && value == null) break;
-            if (selectedLabel.equals(label)) return value;
+        for (int i = 0; i < labels.size() && i < values.size(); i++) {
+            if (selectedLabel.equals(labels.get(i))) return values.get(i);
         }
         return null;
     }

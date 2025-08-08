@@ -3,12 +3,14 @@ package com.darkmatterservers.eclipsebot.service.discord;
 import com.darkmatterservers.builder.PageRenderer;
 import com.darkmatterservers.chain.Page;
 import com.darkmatterservers.chain.PagedChain;
+import com.darkmatterservers.chain.PagedChain.Keys;
 import com.darkmatterservers.context.ComponentContext;
 import com.darkmatterservers.eclipsebot.service.LoggerService;
 import com.darkmatterservers.router.InteractionRouter;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel;
 import net.dv8tion.jda.api.events.interaction.component.ButtonInteractionEvent;
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
@@ -26,6 +28,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * - Start chains in DMs or guild channels
  * - Handle dropdown/button interactions -> route -> re-render current page
  * - In-memory sessions keyed by userId (adjust scoping if you need per-guild/channel)
+ * - Edits a single message per session instead of spamming new ones
  */
 @Component
 public class Bytes {
@@ -63,8 +66,8 @@ public class Bytes {
         if (validateJdaAndUser(jda, userId)) return;
 
         ComponentContext ctx = new ComponentContext(userId);
-        ctx.put("pageIndex", 0);
-        ctx.put("totalPages", chain.totalPages());
+        ctx.put(Keys.PAGE_INDEX, 0);
+        ctx.put(Keys.TOTAL_PAGES, chain.totalPages());
 
         Session session = new Session(chain, ctx);
         sessions.put(userId, session);
@@ -77,8 +80,8 @@ public class Bytes {
     /** Start a paged chain in any message channel (guild text, thread, etc.). */
     public void startChannelPagedChain(String userId, MessageChannel channel, PagedChain chain) {
         ComponentContext ctx = new ComponentContext(userId);
-        ctx.put("pageIndex", 0);
-        ctx.put("totalPages", chain.totalPages());
+        ctx.put(Keys.PAGE_INDEX, 0);
+        ctx.put(Keys.TOTAL_PAGES, chain.totalPages());
 
         Session session = new Session(chain, ctx);
         sessions.put(userId, session);
@@ -169,7 +172,21 @@ public class Bytes {
         if (session == null) return;
 
         if (session.ctx().isComplete()) {
-            channel.sendMessage("✅ Setup complete!").queue();
+            // try to edit the existing message to a final state if we have it
+            String msgId = session.ctx().getString(Keys.MESSAGE_ID);
+            if (msgId != null) {
+                channel.editMessageEmbedsById(msgId, PageRenderer
+                                .render("✅ Setup complete!", 0, 1,
+                                        new Page("Setup complete!", null))
+                                .embed())
+                        .setComponents() // clear components
+                        .queue(
+                                ok -> logger.info("✅ Marked setup complete (edited in place).", getClass().getName()),
+                                err -> channel.sendMessage("✅ Setup complete!").queue()
+                        );
+            } else {
+                channel.sendMessage("✅ Setup complete!").queue();
+            }
             sessions.remove(userId);
             return;
         }
@@ -182,19 +199,47 @@ public class Bytes {
         ComponentContext ctx = session.ctx();
 
         int total = chain.totalPages();
-        ctx.put("totalPages", total);
+        ctx.put(Keys.TOTAL_PAGES, total);
 
-        Object rawIdx = ctx.getOrDefault("pageIndex", 0);
+        Object rawIdx = ctx.getOrDefault(Keys.PAGE_INDEX, 0);
         int idx = (rawIdx instanceof Number) ? ((Number) rawIdx).intValue() : 0;
         idx = chain.clampIndex(idx);
-        ctx.put("pageIndex", idx);
+        ctx.put(Keys.PAGE_INDEX, idx);
 
         Page page = chain.page(idx);
         PageRenderer.Rendered rendered = PageRenderer.render(chain.chainId(), idx, total, page);
 
+        // If we already sent a message for this session, EDIT it in place
+        String existingMessageId = ctx.getString(Keys.MESSAGE_ID);
+        String existingChannelId = ctx.getString(Keys.CHANNEL_ID);
+
+        if (existingMessageId != null && existingChannelId != null && existingChannelId.equals(channel.getId())) {
+            channel.editMessageEmbedsById(existingMessageId, rendered.embed())
+                    .setComponents(rendered.rows().toArray(ActionRow[]::new))
+                    .queue(
+                            ok -> {},
+                            err -> {
+                                // If the original message was deleted (or can't be edited), send a new one and update IDs
+                                sendFreshAndRemember(ctx, channel, rendered);
+                            }
+                    );
+            return;
+        }
+
+        // First render (or channel changed): send and remember ids
+        sendFreshAndRemember(ctx, channel, rendered);
+    }
+
+    private void sendFreshAndRemember(ComponentContext ctx, MessageChannel channel, PageRenderer.Rendered rendered) {
         channel.sendMessageEmbeds(rendered.embed())
                 .setComponents(rendered.rows().toArray(ActionRow[]::new))
-                .queue();
+                .queue(
+                        (Message msg) -> {
+                            ctx.put(Keys.MESSAGE_ID, msg.getId());
+                            ctx.put(Keys.CHANNEL_ID, channel.getId());
+                        },
+                        err -> logger.warn("⚠️ Failed to send page: " + err.getMessage(), getClass().getName())
+                );
     }
 
     private boolean validateJdaAndUser(JDA jda, String userId) {
