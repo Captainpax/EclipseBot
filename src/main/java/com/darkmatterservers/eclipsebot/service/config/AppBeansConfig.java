@@ -20,6 +20,7 @@ public class AppBeansConfig {
 
     /**
      * Bridge to EclipseBytes UI/builders using the shared JDA reference.
+     * If you prefer the internal Bytes wrapper, you can remove this bean.
      */
     @Bean
     public EclipseBytes eclipseBytes(AtomicReference<JDA> jdaRef) {

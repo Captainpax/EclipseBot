@@ -1,9 +1,11 @@
 package com.darkmatterservers.eclipsebot.service.discord;
 
+import com.darkmatterservers.EclipseBytes;
 import com.darkmatterservers.eclipsebot.service.LoggerService;
 import com.darkmatterservers.eclipsebot.service.config.YamlService;
 import com.darkmatterservers.eclipsebot.service.discord.chains.MasterGuildSetup;
-import com.darkmatterservers.EclipseBytes;
+import com.darkmatterservers.router.ComponentHandler;
+import com.darkmatterservers.router.InteractionRouter;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import net.dv8tion.jda.api.JDA;
@@ -12,7 +14,9 @@ import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
+import net.dv8tion.jda.api.interactions.components.ActionRow;
 import net.dv8tion.jda.api.interactions.components.selections.SelectOption;
+import net.dv8tion.jda.api.interactions.components.selections.StringSelectMenu;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -24,7 +28,7 @@ public class MessagingService {
     private final LoggerService logger;
     private final YamlService yamlService;
     private final AtomicReference<JDA> jdaRef;
-    private final EclipseBytes bytes; // Bridge to EclipseBytes (MessageBuilder/DropdownBuilder/etc.)
+    private final EclipseBytes bytes;              // <- using the bean from AppBeansConfig
     private final MasterGuildSetup masterGuildSetup;
 
     public MessagingService(
@@ -43,56 +47,50 @@ public class MessagingService {
 
     @PostConstruct
     public void onInit() {
-        logger.info("✅ MessagingService initialized", String.valueOf(getClass()));
+        logger.info("✅ MessagingService initialized", getClass().getName());
         try {
-            bytes.init();
+            bytes.init(); // safe no-op if already initialized
         } catch (Throwable t) {
-            logger.warn("⚠️ EclipseBytes.init() failed: " + t.getMessage(), String.valueOf(getClass()));
+            logger.warn("⚠️ EclipseBytes.init() failed: " + t.getMessage(), getClass().getName());
         }
     }
 
     @PreDestroy
     public void shutdown() {
-        logger.info("🛑 MessagingService shutting down", String.valueOf(getClass()));
+        logger.info("🛑 MessagingService shutting down", getClass().getName());
         try {
-            bytes.shutdown();
-        } catch (Throwable ignored) {
-        }
+            bytes.shutdown(); // cleans router
+        } catch (Throwable ignored) {}
     }
 
-    // =========================
-    // Public API
-    // =========================
+    // ========================= Public API =========================
 
-    /**
-     * Convenience: Reads admin ID from YAML and greets on startup.
-     * Safe to call even if Discord isn't connected; it will just log and return.
-     */
+    /** Convenience: Reads admin ID from YAML and greets on startup. */
     public void greetAdminOnStartup() {
         String adminId = yamlService.getString("discord.adminId");
         if (adminId == null || adminId.isBlank()) {
-            logger.warn("Admin ID not set (discord.adminId) — skipping startup greeting.", String.valueOf(getClass()));
+            logger.warn("Admin ID not set (discord.adminId) — skipping startup greeting.", getClass().getName());
             return;
         }
         greetAdminOnStartup(adminId);
     }
 
-    /**
-     * Sends a startup greeting to the admin and launches the setup chain if eligible.
-     */
+    /** Sends a startup greeting to the admin and launches the setup chain if eligible. */
     public void greetAdminOnStartup(String adminId) {
         if (adminId == null || adminId.isBlank()) {
-            logger.warn("Admin ID not provided — skipping startup greeting.", String.valueOf(getClass()));
+            logger.warn("Admin ID not provided — skipping startup greeting.", getClass().getName());
             return;
         }
 
         JDA jda = jdaRef.get();
         if (jda == null) {
-            logger.warn("JDA not initialized — cannot send startup DM yet.", String.valueOf(getClass()));
+            logger.warn("JDA not initialized — cannot send startup DM yet.", getClass().getName());
             return;
         }
 
         List<SelectOption> guildOptions = getEligibleGuildOptions(jda, adminId);
+        logger.info("Eligible guild options found=" + guildOptions.size(), getClass().getName());
+
         if (guildOptions.isEmpty()) {
             dmUser(adminId,
                     "⚠️ I can't find any servers where you are **Owner** or have **Administrator** permissions while I'm present.\n" +
@@ -102,13 +100,83 @@ public class MessagingService {
             return;
         }
 
-        // Launch the MasterGuildSetup chain (uses Bytes UI under the hood)
+        // Start the chain with a proper label/value dropdown (guildName/guildId)
         masterGuildSetup.start(adminId, guildOptions);
     }
 
+    /** Forwards select-menu interactions into the router via EclipseBytes helper (acks first). */
+    public void handleDropdownInteraction(StringSelectInteractionEvent event) {
+        try {
+            logger.info("[MessagingService] handleDropdownInteraction id=" + event.getComponentId() +
+                    " user=" + event.getUser().getId() +
+                    " values=" + event.getValues(), getClass().getName());
+            bytes.handleDropdownInteraction(event); // does deferEdit + InteractionRouter.handle(...)
+        } catch (Exception e) {
+            logger.error("Dropdown interaction handling failed: " + e.getMessage(), getClass().getName(), e);
+        }
+    }
+
+    /** Sends a plain text DM via EclipseBytes. */
+    public void dmUser(String userId, String content) {
+        logger.info("📨 DM to user [" + userId + "]", getClass().getName());
+        try {
+            bytes.sendPrivateMessage(userId, content);
+        } catch (Exception e) {
+            logger.error("Failed to DM user " + userId + ": " + e.getMessage(), getClass().getName(), e);
+        }
+    }
+
     /**
-     * Tracks incoming messages and logs them to the console. Skips bot messages.
+     * Sends a DM with a dropdown that supports separate label/value using raw JDA,
+     * while still registering the handler with InteractionRouter.
      */
+    public void dmUserWithDropdown(String userId,
+                                   String message,
+                                   String dropdownId,
+                                   List<SelectOption> options,
+                                   ComponentHandler handler) {
+        logger.info("📨 DM (dropdown) to user [" + userId + "] id=" + dropdownId +
+                " options=" + (options != null ? options.size() : 0), getClass().getName());
+
+        JDA jda = jdaRef.get();
+        if (jda == null) {
+            logger.warn("❌ JDA not initialized — cannot send dropdown.", getClass().getName());
+            return;
+        }
+
+        // Register the handler for this dropdown id
+        com.darkmatterservers.router.InteractionRouter.register(dropdownId, handler);
+
+        // Build a label/value menu
+        StringSelectMenu menu = StringSelectMenu.create(dropdownId)
+                .addOptions(options)
+                .build();
+
+        jda.retrieveUserById(userId).queue(user ->
+                user.openPrivateChannel().queue(channel -> {
+                    channel.sendMessage(message)
+                            .setComponents(ActionRow.of(menu))
+                            .queue(
+                                    ok -> logger.info("✅ Sent dropdown to " + user.getAsTag(), getClass().getName()),
+                                    err -> logger.error("❌ Failed to send dropdown: " + err.getMessage(), getClass().getName())
+                            );
+                })
+        );
+    }
+
+    // ========================= Internal helpers =========================
+
+    /** Filters the guilds where the admin has Owner or Administrator permissions. */
+    private List<SelectOption> getEligibleGuildOptions(JDA jda, String adminId) {
+        return jda.getGuilds().stream()
+                .map(guild -> guild.getMemberById(adminId))
+                .filter(member -> member != null && (member.isOwner() || member.hasPermission(Permission.ADMINISTRATOR)))
+                .map(Member::getGuild)
+                .map(guild -> SelectOption.of(guild.getName(), guild.getId())) // label=name, value=id
+                .toList();
+    }
+
+    /** Optional: track regular messages for logging. */
     public void trackIncomingMessage(MessageReceivedEvent event) {
         Message message = event.getMessage();
         if (message.getAuthor().isBot()) return;
@@ -128,73 +196,6 @@ public class MessagingService {
                 content
         );
 
-        logger.info(summary, String.valueOf(getClass()));
-    }
-
-    /**
-     * Pass through dropdown interactions to EclipseBytes' router.
-     * Call this from your JDA listener: on StringSelectInteractionEvent → messagingService.handleDropdownInteraction(event)
-     */
-    public void handleDropdownInteraction(StringSelectInteractionEvent event) {
-        try {
-            bytes.handleDropdownInteraction(event);
-        } catch (Exception e) {
-            logger.error("Dropdown interaction handling failed: " + e.getMessage(), String.valueOf(getClass()), e);
-        }
-    }
-
-    /**
-     * Sends a plain text DM to the user via EclipseBytes bridge.
-     */
-    public void dmUser(String userId, String content) {
-        logger.info("📨 DM to user [" + userId + "]", String.valueOf(getClass()));
-        logMessageDetails(userId, content, null);
-        try {
-            bytes.sendPrivateMessage(userId, content);
-        } catch (Exception e) {
-            logger.error("Failed to DM user " + userId + ": " + e.getMessage(), String.valueOf(getClass()), e);
-        }
-    }
-
-    /**
-     * Sends a DM with a dropdown via EclipseBytes bridge.
-     */
-    public void dmUserWithDropdown(String userId, String message, String dropdownId, List<String> options,
-                                   com.darkmatterservers.router.ComponentHandler handler) {
-        logger.info("📨 DM (dropdown) to user [" + userId + "] id=" + dropdownId, String.valueOf(getClass()));
-        try {
-            bytes.sendPrivateDropdown(userId, message, dropdownId, options, handler);
-        } catch (Exception e) {
-            logger.error("Failed to DM dropdown to user " + userId + ": " + e.getMessage(), String.valueOf(getClass()), e);
-        }
-    }
-
-    // =========================
-    // Internal helpers
-    // =========================
-
-    /**
-     * Filters the guilds where the admin has Owner or Administrator permissions.
-     */
-    private List<SelectOption> getEligibleGuildOptions(JDA jda, String adminId) {
-        return jda.getGuilds().stream()
-                .map(guild -> guild.getMemberById(adminId))
-                .filter(member -> member != null && (member.isOwner() || member.hasPermission(Permission.ADMINISTRATOR)))
-                .map(Member::getGuild)
-                .map(guild -> SelectOption.of(guild.getName(), guild.getId()))
-                .toList();
-    }
-
-    /**
-     * Logs the outgoing message and any attached dropdown metadata.
-     */
-    private void logMessageDetails(String target, String message, List<SelectOption> options) {
-        logger.info("📦 Outgoing message [DM] → " + target, String.valueOf(getClass()));
-        logger.info("📝 Content:\n" + message, String.valueOf(getClass()));
-        if (options != null && !options.isEmpty()) {
-            logger.info("📎 Attachments: dropdown=" + options.size(), String.valueOf(getClass()));
-        } else {
-            logger.info("📎 Attachments: none", String.valueOf(getClass()));
-        }
+        logger.info(summary, getClass().getName());
     }
 }
