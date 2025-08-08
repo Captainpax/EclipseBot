@@ -8,7 +8,6 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.events.interaction.component.StringSelectInteractionEvent;
-import net.dv8tion.jda.api.interactions.components.ActionRow;
 import net.dv8tion.jda.api.interactions.components.selections.SelectOption;
 import net.dv8tion.jda.api.interactions.components.selections.StringSelectMenu;
 import org.springframework.stereotype.Component;
@@ -42,24 +41,34 @@ public class Bytes {
             System.err.println("❌ Cannot send DM — JDA or userId is null");
             return;
         }
-
-        jda.retrieveUserById(userId).queue(user -> {
-            user.openPrivateChannel().queue(channel -> {
-                channel.sendMessage(content).queue();
-                System.out.println("✅ Sent DM to " + user.getAsTag());
-            });
-        });
+        jda.retrieveUserById(userId).queue(user ->
+                user.openPrivateChannel().queue(channel -> {
+                    channel.sendMessage(content).queue();
+                    System.out.println("✅ Sent DM to " + user.getAsTag());
+                })
+        );
     }
 
-    public void sendPrivateDropdown(String userId, String message, String dropdownId, List<SelectOption> options, ComponentHandler handler) {
+    /**
+     * Sends a DM containing a dropdown menu and registers the handler
+     * with the InteractionRouter under the provided dropdownId.
+     */
+    public void sendPrivateDropdown(
+            String userId,
+            String message,
+            String dropdownId,
+            List<SelectOption> options,
+            ComponentHandler handler
+    ) {
         JDA jda = jdaRef.get();
-        if (jda == null) {
-            System.err.println("❌ JDA not initialized");
+        if (jda == null || userId == null || userId.isBlank()) {
+            System.err.println("❌ Cannot send dropdown — JDA or userId is null");
             return;
         }
 
+        // Build dropdown (NOTE: value first, label second)
         DropdownBuilder builder = new DropdownBuilder(dropdownId);
-        options.forEach(opt -> builder.withOption(opt.getLabel(), opt.getValue()));
+        options.forEach(opt -> builder.withOption(opt.getValue(), opt.getLabel()));
         builder.register(handler);
 
         StringSelectMenu menu = StringSelectMenu.create(dropdownId)
@@ -68,18 +77,24 @@ public class Bytes {
                         .toList())
                 .build();
 
-        jda.retrieveUserById(userId).queue(user -> {
-            user.openPrivateChannel().queue(channel -> {
-                channel.sendMessage(message)
-                        .setComponents(ActionRow.of(menu))
-                        .queue();
-                System.out.println("✅ Sent dropdown DM to " + user.getAsTag());
-            });
-        });
+        jda.retrieveUserById(userId).queue(user ->
+                user.openPrivateChannel().queue(channel -> {
+                    channel.sendMessage(message)
+                            .addActionRow(menu)
+                            .queue();
+                    System.out.println("✅ Sent dropdown DM to " + user.getAsTag());
+                })
+        );
     }
 
+    /**
+     * Forwards dropdown interactions into the InteractionRouter.
+     */
     public void handleDropdownInteraction(StringSelectInteractionEvent event) {
+        if (event == null) return;
+
         String id = event.getComponentId();
+        event.getUser();
         String userId = event.getUser().getId();
 
         ComponentContext ctx = new ComponentContext(userId);
