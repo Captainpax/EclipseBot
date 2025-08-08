@@ -8,11 +8,14 @@ import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.entities.Activity;
 import net.dv8tion.jda.api.exceptions.InvalidTokenException;
+import net.dv8tion.jda.api.hooks.EventListener;
 import net.dv8tion.jda.api.requests.GatewayIntent;
+import net.dv8tion.jda.api.utils.MemberCachePolicy;
 import net.dv8tion.jda.api.utils.cache.CacheFlag;
 import org.springframework.stereotype.Service;
 
 import java.util.EnumSet;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -26,9 +29,8 @@ public class DiscordService {
     private final MessagingService messagingService;
     private final AtomicReference<JDA> jdaRef;
 
-    // ✅ listeners wired via Spring and registered on JDABuilder
-    private final JdaListener jdaListener;
-    private final DebugListener debugListener; // temporary debug, safe to keep
+    // ✅ All JDA listeners discovered via Spring (e.g., DebugListener, your command listeners, etc.)
+    private final List<EventListener> jdaListeners;
 
     private String token;
     private String botId;
@@ -42,15 +44,13 @@ public class DiscordService {
             YamlService yamlService,
             MessagingService messagingService,
             AtomicReference<JDA> jdaRef,
-            JdaListener jdaListener,
-            DebugListener debugListener
+            List<EventListener> jdaListeners // Spring injects all beans implementing EventListener
     ) {
         this.logger = logger;
         this.yamlService = yamlService;
         this.messagingService = messagingService;
         this.jdaRef = jdaRef;
-        this.jdaListener = jdaListener;
-        this.debugListener = debugListener;
+        this.jdaListeners = jdaListeners;
 
         // Load initial credentials from YAML
         reloadCredsFromYaml();
@@ -59,7 +59,7 @@ public class DiscordService {
     private void reloadCredsFromYaml() {
         this.token = yamlService.getString("discord.token");
         this.botId = yamlService.getString("discord.botId");
-        this.adminId = yamlService.getString("discord.adminId"); // NOTE: keep consistent key (discord.adminId)
+        this.adminId = yamlService.getString("discord.adminId"); // keep key consistent
 
         if (token != null && !token.isBlank()) {
             logger.info("🔍 Loaded Discord token from YAML.", getClass().getName());
@@ -70,7 +70,6 @@ public class DiscordService {
 
     /**
      * Attempts to start JDA. Returns true if the bot is fully connected (awaitReady), false otherwise.
-     * NEVER throws; on failure, logs and returns false so CoreService can fall back to setup mode.
      */
     public boolean start() {
         // Validate creds (and treat placeholders as invalid)
@@ -81,33 +80,39 @@ public class DiscordService {
             return false;
         }
 
-        // Build JDA
         try {
             logger.info("🤖 Attempting Discord login with bot ID: " + botId, getClass().getName());
 
-            JDABuilder builder = JDABuilder.create(token, EnumSet.of(
-                            GatewayIntent.GUILD_MESSAGES,
-                            GatewayIntent.MESSAGE_CONTENT,
-                            GatewayIntent.GUILD_MEMBERS,
-                            GatewayIntent.DIRECT_MESSAGES
-                    ))
+            EnumSet<GatewayIntent> intents = EnumSet.of(
+                    GatewayIntent.GUILD_MESSAGES,
+                    GatewayIntent.DIRECT_MESSAGES,
+                    GatewayIntent.MESSAGE_CONTENT // keep only if needed and enabled in Dev Portal
+            );
+
+            JDABuilder builder = JDABuilder.create(token, intents)
                     .disableCache(
                             CacheFlag.ACTIVITY,
                             CacheFlag.VOICE_STATE,
                             CacheFlag.EMOJI,
                             CacheFlag.STICKER,
                             CacheFlag.CLIENT_STATUS,
-                            CacheFlag.ONLINE_STATUS,
                             CacheFlag.SCHEDULED_EVENTS
                     )
-                    .setActivity(Activity.watching("for /setup requests"))
-                    // ✅ Register listeners so select-menu interactions are captured
-                    .addEventListeners(jdaListener, debugListener);
+                    .setMemberCachePolicy(MemberCachePolicy.NONE)
+                    .setActivity(Activity.watching("for /setup requests"));
+
+            // 👉 Register every Spring-managed EventListener (ListenerAdapter implements EventListener)
+            if (jdaListeners != null && !jdaListeners.isEmpty()) {
+                logger.info("🔗 Registering " + jdaListeners.size() + " JDA listener(s).", getClass().getName());
+                builder.addEventListeners(jdaListeners.toArray());
+            } else {
+                logger.warn("⚠️ No JDA listeners found. Did you annotate them with @Component?", getClass().getName());
+            }
 
             // Start connecting
             JDA jda = builder.build();
 
-            // Wait until ready so a `true` return actually means "connected and usable"
+            // Wait until ready
             try {
                 jda.awaitReady();
             } catch (InterruptedException ie) {
@@ -157,7 +162,6 @@ public class DiscordService {
             logger.info("🛑 Shutting down Discord bot...", getClass().getName());
             shutdownQuietly(jda);
         }
-        // Give MessagingService a chance to clean up component handlers, etc.
         try {
             messagingService.shutdown();
         } catch (Exception e) {
@@ -169,21 +173,20 @@ public class DiscordService {
      * Update credentials, persist to YAML, and attempt a restart.
      * Returns true if restart (re)connected successfully.
      */
-    public boolean restartWithToken(String newToken, String newBotId, String newAdminId) {
+    public void restartWithToken(String newToken, String newBotId, String newAdminId) {
         stop();
 
         this.token = newToken;
         this.botId = newBotId;
         this.adminId = newAdminId;
 
-        // Persist under consistent keys
         yamlService.set("discord.token", newToken);
         yamlService.set("discord.botId", newBotId);
         yamlService.set("discord.adminId", newAdminId);
         yamlService.save();
 
         logger.info("💾 Saved Discord credentials and admin ID to config.yaml", getClass().getName());
-        return start();
+        start();
     }
 
     @PreDestroy
