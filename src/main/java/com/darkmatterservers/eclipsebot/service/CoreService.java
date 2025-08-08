@@ -4,14 +4,13 @@ import com.darkmatterservers.eclipsebot.service.config.YamlService;
 import com.darkmatterservers.eclipsebot.service.config.builders.InitYaml;
 import com.darkmatterservers.eclipsebot.service.discord.DiscordService;
 import com.darkmatterservers.eclipsebot.service.discord.MessagingService;
-import net.dv8tion.jda.api.JDA;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
-
+@SuppressWarnings("unused")
 @Service
 public class CoreService {
 
@@ -59,7 +58,7 @@ public class CoreService {
             logger.info("✅ Discord credentials detected — attempting login...", String.valueOf(getClass()));
         }
 
-        // Try to start Discord; do NOT exit app if it fails
+        // Try to start Discord; do NOT exit the app if it fails
         boolean loggedIn = false;
         try {
             loggedIn = discordService.start(); // should return false on InvalidToken / failures

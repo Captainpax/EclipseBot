@@ -24,12 +24,13 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Bytes: EclipseBot bridge around EclipseBytes paged chain system.
- *
+ * <p>
  * - Start chains in DMs or guild channels
  * - Handle dropdown/button interactions -> route -> re-render current page
  * - In-memory sessions keyed by userId (adjust scoping if you need per-guild/channel)
  * - Edits a single message per session instead of spamming new ones
  */
+@SuppressWarnings("unused")
 @Component
 public class Bytes {
 
@@ -121,7 +122,7 @@ public class Bytes {
 
         try {
             String componentId = event.getComponentId();
-            String selected = event.getValues().isEmpty() ? null : event.getValues().get(0);
+            String selected = event.getValues().isEmpty() ? null : event.getValues().getFirst();
 
             ComponentContext ctx = session.ctx();
             ctx.put("value", selected);              // legacy-friendly
@@ -175,10 +176,8 @@ public class Bytes {
             // try to edit the existing message to a final state if we have it
             String msgId = session.ctx().getString(Keys.MESSAGE_ID);
             if (msgId != null) {
-                channel.editMessageEmbedsById(msgId, PageRenderer
-                                .render("✅ Setup complete!", 0, 1,
-                                        new Page("Setup complete!", null))
-                                .embed())
+                PageRenderer.Rendered done = PageRenderer.render("✅ Setup complete!", 0, 1, new Page("Setup complete!", null), session.ctx());
+                channel.editMessageEmbedsById(msgId, done.embed())
                         .setComponents() // clear components
                         .queue(
                                 ok -> logger.info("✅ Marked setup complete (edited in place).", getClass().getName()),
@@ -207,7 +206,7 @@ public class Bytes {
         ctx.put(Keys.PAGE_INDEX, idx);
 
         Page page = chain.page(idx);
-        PageRenderer.Rendered rendered = PageRenderer.render(chain.chainId(), idx, total, page);
+        PageRenderer.Rendered rendered = PageRenderer.render(chain.chainId(), idx, total, page, ctx);
 
         // If we already sent a message for this session, EDIT it in place
         String existingMessageId = ctx.getString(Keys.MESSAGE_ID);

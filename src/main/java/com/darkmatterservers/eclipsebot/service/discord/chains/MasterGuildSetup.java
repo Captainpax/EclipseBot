@@ -9,11 +9,11 @@ import com.darkmatterservers.eclipsebot.service.LoggerService;
 import com.darkmatterservers.eclipsebot.service.config.YamlService;
 import com.darkmatterservers.eclipsebot.service.discord.Bytes;
 import net.dv8tion.jda.api.JDA;
-import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.Role;
 import net.dv8tion.jda.api.entities.channel.concrete.Category;
 import net.dv8tion.jda.api.interactions.components.selections.SelectOption;
+import net.dv8tion.jda.api.interactions.components.buttons.ButtonStyle;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
@@ -24,15 +24,16 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
- * MasterGuildSetup — PagedChain version with dynamic roles/categories
+ * MasterGuildSetup — PagedChain version with dynamic roles/categories & JS-flow parity
  * <p>
- * Flow (4 uniform pages):
+ * Pages (uniform):
  *  1) Welcome (Next)
- *  2) Pick Server (dropdown + Back/Next)
+ *  2) Pick Master Server (dropdown + Back/Next)
  *  3) Pick Roles (Mods/Players/Create + Back/Next + Role dropdown)
  *  4) Pick Admin Category (Create + Back/Done + Category dropdown)
  * <p>
- * Handlers persist user choices in ComponentContext, and on Done we save to YAML.
+ * Handlers persist user choices in ComponentContext, refresh dropdowns dynamically,
+ * and on Done we save to YAML and complete.
  */
 @Component
 public class MasterGuildSetup {
@@ -77,8 +78,8 @@ public class MasterGuildSetup {
         // Build the chain with initial dropdown options (roles/categories will refresh after guild select)
         var chain = buildChain(guildLabels,
                 guildValues,
-                List.of(), // roles placeholder; replaced on guild selection
-                List.of()  // categories placeholder; replaced on guild selection
+                List.of(), // role placeholder; replaced on guild selection
+                List.of()  // category placeholder; replaced on guild selection
         );
 
         // Start the chain in DMs
@@ -95,7 +96,7 @@ public class MasterGuildSetup {
                 "Please click continue to goto the next page"
         ).withButton(3, Buttons.next());
 
-        // Page 2 — Pick server (dropdown shows names; we translate to IDs in handler)
+        // Page 2 — Pick server (dropdown shows names; we translate to IDs in the handler)
         Page p1 = new Page(
                 "Pick a setup Server to the master server",
                 null
@@ -106,20 +107,20 @@ public class MasterGuildSetup {
         // Page 3 — Pick roles
         Page p2 = new Page(
                 "Pick a role of Mods and Players",
-                "Click Mods/Players to switch ur selction"
+                "Click Mods/Players to switch ur selection"
         ).withButton(0, Buttons.back())
                 .withButton(3, Buttons.next())
-                .withButton(5, Buttons.buildButton(ID_BTN_MODS, "Mods"))
-                .withButton(6, Buttons.buildButton(ID_BTN_PLAYERS, "Players"))
-                .withButton(7, Buttons.buildButton(ID_BTN_CREATE_ROLES, "Create"))
+                .withButton(5, Buttons.buildButton(ID_BTN_MODS, "Mods", ButtonStyle.SECONDARY))
+                .withButton(6, Buttons.buildButton(ID_BTN_PLAYERS, "Players", ButtonStyle.SECONDARY))
+                .withButton(7, Buttons.buildButton(ID_BTN_CREATE_ROLES, "Create", ButtonStyle.SUCCESS))
                 .withDropdown(Dropdowns.dropdown(ID_DD_ROLES, "Pick a Role", rolesInGuild));
 
-        // Page 4 — Pick admin category
+        // Page 4 — Pick an admin category
         Page p3 = new Page(
-                "Pick a Category for the Admin Panle.",
+                "Pick a Category for the Admin Panel.",
                 null
         ).withButton(0, Buttons.back())
-                .withButton(2, Buttons.buildButton(ID_BTN_CREATE_PANEL, "Create"))
+                .withButton(2, Buttons.buildButton(ID_BTN_CREATE_PANEL, "Create", ButtonStyle.SECONDARY))
                 .withButton(3, Buttons.done())
                 .withDropdown(Dropdowns.dropdown(ID_DD_CATEGORY, "Pick a Category", categoriesInGuild));
 
@@ -143,8 +144,9 @@ public class MasterGuildSetup {
                     // Refresh roles/categories from JDA for this guild and update dropdowns in-place
                     try {
                         var data = fetchGuildData(guildId);
-                        ctx.put("roles.options", data.roles());
-                        ctx.put("categories.options", data.categories());
+                        // make them available to PageRenderer as dynamic overrides
+                        ctx.put(ID_DD_ROLES + ".options", data.roles());
+                        ctx.put(ID_DD_CATEGORY + ".options", data.categories());
                     } catch (Exception e) {
                         logger.warn("⚠️ Failed to refresh guild data for " + guildId + ": " + e.getMessage(), getClass().getName());
                     }
@@ -161,13 +163,78 @@ public class MasterGuildSetup {
                 .on(ID_BTN_MODS, ctx -> ctx.put("roleMode", "mods"))
                 .on(ID_BTN_PLAYERS, ctx -> ctx.put("roleMode", "players"))
                 .on(ID_BTN_CREATE_ROLES, ctx -> {
-                    // TODO: JDA role creation in selected guild; for now mark created
-                    ctx.put("modsRole", ctx.getOrDefault("modsRole", "Created:Mods"));
-                    ctx.put("playersRole", ctx.getOrDefault("playersRole", "Created:Players"));
+                    String guildId = ctx.getString("guildId");
+                    if (guildId == null || guildId.isBlank()) {
+                        logger.warn("⚠️ CreateRoles clicked but guildId is missing in context", getClass().getName());
+                        return;
+                    }
+                    JDA jda = jdaRef.get();
+                    if (jda == null) {
+                        logger.warn("⚠️ JDA not available; cannot create roles", getClass().getName());
+                        return;
+                    }
+                    Guild guild = jda.getGuildById(guildId);
+                    if (guild == null) {
+                        logger.warn("⚠️ Guild not found for id=" + guildId, getClass().getName());
+                        return;
+                    }
+
+                    try {
+                        String desiredModsName = String.valueOf(ctx.getOrDefault("modsRole", "Mods"));
+                        String desiredPlayersName = String.valueOf(ctx.getOrDefault("playersRole", "Players"));
+
+                        Role mods = ensureRole(guild, desiredModsName);
+                        Role players = ensureRole(guild, desiredPlayersName);
+
+                        ctx.put("modsRole", mods.getName());
+                        ctx.put("playersRole", players.getName());
+
+                        // Refresh dropdown options so the new roles appear immediately
+                        List<String> roleNames = guild.getRoles().stream()
+                                .filter(r -> !r.isManaged())
+                                .map(Role::getName)
+                                .collect(Collectors.toList());
+                        ctx.put(ID_DD_ROLES + ".options", roleNames);
+
+                        logger.info("✅ Ensured roles exist in guild " + guild.getName() +
+                                ": mods='" + mods.getName() + "', players='" + players.getName() + "'", getClass().getName());
+                    } catch (Exception e) {
+                        logger.warn("⚠️ Failed creating roles in guild " + guildId + ": " + e.getMessage(), getClass().getName());
+                    }
                 })
                 .on(ID_BTN_CREATE_PANEL, ctx -> {
-                    // TODO: JDA category creation in selected guild; for now mark created
-                    ctx.put("adminCategory", ctx.getOrDefault("adminCategory", "Created:AdminPanel"));
+                    String guildId = ctx.getString("guildId");
+                    if (guildId == null || guildId.isBlank()) {
+                        logger.warn("⚠️ CreateAdminPanel clicked but guildId is missing in context", getClass().getName());
+                        return;
+                    }
+                    JDA jda = jdaRef.get();
+                    if (jda == null) {
+                        logger.warn("⚠️ JDA not available; cannot create category", getClass().getName());
+                        return;
+                    }
+                    Guild guild = jda.getGuildById(guildId);
+                    if (guild == null) {
+                        logger.warn("⚠️ Guild not found for id=" + guildId, getClass().getName());
+                        return;
+                    }
+
+                    try {
+                        String desiredName = String.valueOf(ctx.getOrDefault("adminCategory", "Admin Panel"));
+                        Category cat = ensureCategory(guild, desiredName);
+                        ctx.put("adminCategory", cat.getName());
+
+                        // Refresh dropdown options so the new category appears immediately
+                        List<String> categories = guild.getCategories().stream()
+                                .map(Category::getName)
+                                .collect(Collectors.toList());
+                        ctx.put(ID_DD_CATEGORY + ".options", categories);
+
+                        logger.info("✅ Ensured admin category exists in guild " + guild.getName() +
+                                ": '" + cat.getName() + "'", getClass().getName());
+                    } catch (Exception e) {
+                        logger.warn("⚠️ Failed creating category in guild " + guildId + ": " + e.getMessage(), getClass().getName());
+                    }
                 })
 
                 // Done -> persist to YAML then complete
@@ -226,6 +293,33 @@ public class MasterGuildSetup {
                 .collect(Collectors.toList());
 
         return new GuildData(roles, categories);
+    }
+
+    /** Ensure a role with the given name exists in the guild; create it if missing (blocking). */
+    private Role ensureRole(Guild guild, String name) {
+        if (name == null || name.isBlank()) name = "Role";
+        String finalName = name;
+        Role existing = guild.getRoles().stream()
+                .filter(r -> r.getName().equalsIgnoreCase(finalName))
+                .findFirst()
+                .orElse(null);
+        if (existing != null) return existing;
+        // Create a role with no permissions by default; admins can adjust later
+        return guild.createRole()
+                .setName(name)
+                .complete(); // blocking is acceptable inside our deferred interaction flow
+    }
+
+    /** Ensure a category with the given name exists in the guild; create it if missing (blocking). */
+    private Category ensureCategory(Guild guild, String name) {
+        if (name == null || name.isBlank()) name = "Admin Panel";
+        String finalName = name;
+        Category existing = guild.getCategories().stream()
+                .filter(c -> c.getName().equalsIgnoreCase(finalName))
+                .findFirst()
+                .orElse(null);
+        if (existing != null) return existing;
+        return guild.createCategory(name).complete(); // blocking; acceptable within deferred flow
     }
 
     private String mapLabelToValue(String selectedLabel, List<String> labels, List<String> values) {
