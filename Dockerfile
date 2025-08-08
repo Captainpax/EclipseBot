@@ -18,4 +18,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:5000 || exit 1
 
 # Run the jar file
-ENTRYPOINT ["java", "-jar", "EclipseBot-0.2.4.jar"]
+ENTRYPOINT ["java", "-jar", "app.jar"]
