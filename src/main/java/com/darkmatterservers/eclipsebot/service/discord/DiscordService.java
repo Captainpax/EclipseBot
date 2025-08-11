@@ -20,6 +20,12 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Handles the lifecycle and connection of the EclipseBot Discord client.
+ * <p>
+ * JDA 5.6.1–compatible:
+ *  - Removed the deprecated/non-existent GUILDS intent
+ *  - Minimal intents for DM/guild messaging and on-demand member checks
+ *  - Registers all Spring-managed listeners
+ *  - Greets the configured admin on successful connect
  */
 @Service
 public class DiscordService {
@@ -29,12 +35,13 @@ public class DiscordService {
     private final MessagingService messagingService;
     private final AtomicReference<JDA> jdaRef;
 
-    // ✅ All JDA listeners discovered via Spring (e.g., DebugListener, your command listeners, etc.)
+    // All JDA listeners discovered via Spring (e.g., command listeners, interaction routers, etc.)
     private final List<EventListener> jdaListeners;
 
     private String token;
     private String botId;
     private String adminId;
+    private String presence;
 
     @Getter
     private volatile boolean running = false;
@@ -44,33 +51,30 @@ public class DiscordService {
             YamlService yamlService,
             MessagingService messagingService,
             AtomicReference<JDA> jdaRef,
-            List<EventListener> jdaListeners // Spring injects all beans implementing EventListener
+            List<EventListener> jdaListeners
     ) {
         this.logger = logger;
         this.yamlService = yamlService;
         this.messagingService = messagingService;
         this.jdaRef = jdaRef;
         this.jdaListeners = jdaListeners;
-
-        // Load initial credentials from YAML
         reloadCredsFromYaml();
     }
 
     private void reloadCredsFromYaml() {
-        this.token = yamlService.getString("discord.token");
-        this.botId = yamlService.getString("discord.botId");
-        this.adminId = yamlService.getString("discord.adminId"); // keep key consistent
-
-        if (token != null && !token.isBlank()) {
-            logger.info("🔍 Loaded Discord token from YAML.", getClass().getName());
-        } else {
-            logger.warn("⚠️ No Discord token found in YAML.", getClass().getName());
-        }
+        this.token   = yamlService.getString("discord.token");
+        this.botId   = yamlService.getString("discord.botId");
+        this.adminId = yamlService.getString("discord.adminId");
+        loadPresenceFromYaml();
     }
 
-    /**
-     * Attempts to start JDA. Returns true if the bot is fully connected (awaitReady), false otherwise.
-     */
+    /** Load presence string (fall back to a sane default). */
+    private void loadPresenceFromYaml() {
+        String p = yamlService.getString("discord.presence");
+        this.presence = (p == null || p.isBlank()) ? "for /setup" : p.trim();
+    }
+
+    /** Attempts to start JDA. Returns true if fully connected (awaitReady). */
     public boolean start() {
         // Validate creds (and treat placeholders as invalid)
         if (token == null || token.isBlank() || "your-token-here".equalsIgnoreCase(token)
@@ -83,13 +87,22 @@ public class DiscordService {
         try {
             logger.info("🤖 Attempting Discord login with bot ID: " + botId, getClass().getName());
 
+            // Intents for our flows:
+            //  - DIRECT_MESSAGES for DM wizard
+            //  - GUILD_MESSAGES for interactions in guild channels
+            //  - GUILD_MEMBERS for retrieveMemberById() during eligibility checks
+            //  - MESSAGE_CONTENT optional (only if enabled) for free-text handling
+            boolean wantMessageContent = yamlService.getBoolean("discord.enableMessageContent", false);
+
             EnumSet<GatewayIntent> intents = EnumSet.of(
                     GatewayIntent.GUILD_MESSAGES,
                     GatewayIntent.DIRECT_MESSAGES,
-                    GatewayIntent.MESSAGE_CONTENT // keep only if needed and enabled in Dev Portal
+                    GatewayIntent.GUILD_MEMBERS
             );
+            if (wantMessageContent) intents.add(GatewayIntent.MESSAGE_CONTENT);
 
             JDABuilder builder = JDABuilder.create(token, intents)
+                    // Keep caches lean – we prefer REST for one-off fetches
                     .disableCache(
                             CacheFlag.ACTIVITY,
                             CacheFlag.VOICE_STATE,
@@ -99,9 +112,10 @@ public class DiscordService {
                             CacheFlag.SCHEDULED_EVENTS
                     )
                     .setMemberCachePolicy(MemberCachePolicy.NONE)
-                    .setActivity(Activity.watching("for /setup requests"));
+                    .setActivity(Activity.watching(presence))
+                    .setAutoReconnect(true);
 
-            // 👉 Register every Spring-managed EventListener (ListenerAdapter implements EventListener)
+            // Register every Spring-managed EventListener
             if (jdaListeners != null && !jdaListeners.isEmpty()) {
                 logger.info("🔗 Registering " + jdaListeners.size() + " JDA listener(s).", getClass().getName());
                 builder.addEventListeners(jdaListeners.toArray());
@@ -131,7 +145,6 @@ public class DiscordService {
             // Success
             jdaRef.set(jda);
             running = true;
-
             logger.success("✅ Discord bot is online as " + jda.getSelfUser().getAsTag(), getClass().getName());
 
             // Optional: greet configured admin on successful connect
@@ -169,15 +182,12 @@ public class DiscordService {
         }
     }
 
-    /**
-     * Update credentials, persist to YAML, and attempt a restart.
-     * Returns true if restart (re)connected successfully.
-     */
+    /** Update credentials, persist to YAML, and attempt a restart. */
     public void restartWithToken(String newToken, String newBotId, String newAdminId) {
         stop();
 
-        this.token = newToken;
-        this.botId = newBotId;
+        this.token   = newToken;
+        this.botId   = newBotId;
         this.adminId = newAdminId;
 
         yamlService.set("discord.token", newToken);

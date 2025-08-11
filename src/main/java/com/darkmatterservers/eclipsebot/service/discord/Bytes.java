@@ -23,16 +23,20 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Bytes: EclipseBot bridge around EclipseBytes paged chain system.
+ * Bytes: EclipseBot bridge around the EclipseBytes paged chain system.
  * <p>
- * - Start chains in DMs or guild channels
- * - Handle dropdown/button interactions -> route -> re-render current page
- * - In-memory sessions keyed by userId (adjust scoping if you need per-guild/channel)
- * - Edits a single message per session instead of spamming new ones
+ * Responsibilities:
+ *  - Start chains in DMs or guild channels
+ *  - Handle dropdown/button interactions -> route -> re-render the current page
+ *  - Keep a single message per session and edit it in-place
+ *  - Support dropdown UX flags (selected highlighting and optional auto-next)
  */
 @SuppressWarnings("unused")
 @Component
 public class Bytes {
+
+    private static final String PLACEHOLDER_PREFIX = "noop.";           // any id starting with this is a placeholder
+    private static final String PLACEHOLDER_ID     = "noop.placeholder"; // common convenience id
 
     private final AtomicReference<JDA> jdaRef;
     private final LoggerService logger;
@@ -125,11 +129,19 @@ public class Bytes {
             String selected = event.getValues().isEmpty() ? null : event.getValues().getFirst();
 
             ComponentContext ctx = session.ctx();
-            ctx.put("value", selected);              // legacy-friendly
-            ctx.put("interactionValue", selected);   // modern-friendly
+            ctx.put("value", selected);            // legacy-friendly
+            ctx.put("interactionValue", selected); // modern-friendly
+            ctx.put(componentId + ".selected", selected); // keep it highlighted in the renderer
             ctx.put("rawEvent", event);
 
+            // Route to handler first (handlers may update context further)
             InteractionRouter.handle(componentId, ctx);
+
+            // Optional auto-next behavior if the flag is set ("<id>.autoNext" = true)
+            if (PagedChain.isAutoNext(ctx, componentId)) {
+                PagedChain.advancePage(ctx, +1);
+            }
+
             event.deferEdit().queue();
         } catch (Throwable t) {
             logger.error("[Bytes] Dropdown handler error: " + t.getMessage(), getClass().getName(), t);
@@ -150,6 +162,14 @@ public class Bytes {
 
         try {
             String componentId = event.getComponentId();
+
+            // Placeholder / No-op buttons: reply ephemerally and do not mutate state
+            if (componentId.equals(PLACEHOLDER_ID) || componentId.startsWith(PLACEHOLDER_PREFIX)) {
+                event.reply("Not a real button.").setEphemeral(true).queue();
+                // still re-render in case something else changed via context
+                renderPostInteraction(userId, event.getChannel());
+                return;
+            }
 
             ComponentContext ctx = session.ctx();
             ctx.put("buttonId", componentId);
@@ -176,7 +196,8 @@ public class Bytes {
             // try to edit the existing message to a final state if we have it
             String msgId = session.ctx().getString(Keys.MESSAGE_ID);
             if (msgId != null) {
-                PageRenderer.Rendered done = PageRenderer.render("✅ Setup complete!", 0, 1, new Page("Setup complete!", null), session.ctx());
+                PageRenderer.Rendered done = PageRenderer.render(
+                        "✅ Setup complete!", 0, 1, new Page("Setup complete!", null), session.ctx());
                 channel.editMessageEmbedsById(msgId, done.embed())
                         .setComponents() // clear components
                         .queue(

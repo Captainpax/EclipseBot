@@ -9,14 +9,18 @@ import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 import org.yaml.snakeyaml.representer.Representer;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileWriter;
-import java.io.IOException;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 
 /**
- * Service responsible for reading, writing, and modifying config.yaml
+ * Robust YAML config service for reading/writing config.yaml.
+ * - Safe loading with SnakeYAML SafeConstructor
+ * - Defensive casting and deep-set helpers
+ * - Optional typed getters (String, Boolean, Int, Long)
+ * - Atomic save to avoid partial writes
  */
 @Service
 public class YamlService {
@@ -36,54 +40,66 @@ public class YamlService {
         options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
 
         LoaderOptions loaderOptions = new LoaderOptions();
+        loaderOptions.setAllowDuplicateKeys(false);
         Representer representer = new Representer(options);
 
         this.yaml = new Yaml(new SafeConstructor(loaderOptions), representer, options);
         load();
     }
 
-    public void load() {
-        File file = new File(CONFIG_FILE);
+    // -------------------- Loading / Saving --------------------
 
+    public synchronized void load() {
+        File file = new File(CONFIG_FILE);
         if (!file.exists()) {
-            logger.warn("⚠️ config.yaml not found. Starting with empty config.", getClass().toString());
+            logger.warn("⚠️ config.yaml not found. Starting with empty config.", getClass().getName());
             configMap = new LinkedHashMap<>();
             return;
         }
-
-        try (FileInputStream input = new FileInputStream(file)) {
-            Object data = yaml.load(input);
-            if (data instanceof Map<?, ?> loadedMap) {
-                configMap = castToStringObjectMap(loadedMap);
-                logger.info("📄 Loaded config.yaml successfully.");
+        try (InputStream in = new FileInputStream(file)) {
+            Object data = yaml.load(in);
+            if (data instanceof Map<?, ?> loaded) {
+                configMap = castToStringObjectMap(loaded);
+                logger.info("📄 Loaded config.yaml successfully.", getClass().getName());
             } else {
-                logger.warn("⚠️ config.yaml loaded but format is invalid.", getClass().toString());
+                logger.warn("⚠️ config.yaml loaded but format is invalid; starting empty.", getClass().getName());
                 configMap = new LinkedHashMap<>();
             }
         } catch (IOException e) {
-            logger.error("❌ Failed to load config.yaml: " + e.getMessage(), getClass().toString());
+            logger.error("❌ Failed to load config.yaml: " + e.getMessage(), getClass().getName());
             configMap = new LinkedHashMap<>();
         }
     }
 
-    public void save() {
+    public synchronized void save() {
         saveToFile(CONFIG_FILE, configMap);
     }
 
-    public void saveToFile(String filePath, Map<String, Object> data) {
-        try (FileWriter writer = new FileWriter(filePath)) {
-            yaml.dump(data, writer);
-            logger.info("✅ Saved YAML config to " + filePath);
+    /** Write atomically to avoid truncated files. */
+    public synchronized void saveToFile(String filePath, Map<String, Object> data) {
+        Path path = Path.of(filePath);
+        Path tmp = path.resolveSibling(path.getFileName() + ".tmp");
+        try (Writer w = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
+            yaml.dump(data, w);
         } catch (IOException e) {
-            logger.error("❌ Failed to save YAML config: " + e.getMessage(), getClass().toString());
+            logger.error("❌ Failed to write temp YAML: " + e.getMessage(), getClass().getName());
+            return;
+        }
+        try {
+            Files.move(tmp, path, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            logger.info("✅ Saved YAML config to " + filePath, getClass().getName());
+        } catch (IOException e) {
+            logger.error("❌ Failed to finalize YAML save: " + e.getMessage(), getClass().getName());
         }
     }
 
+    // -------------------- Getters --------------------
+
     public Object get(String path) {
+        if (path == null || path.isBlank()) return null;
         String[] parts = path.split("\\.");
         Map<String, Object> current = configMap;
         Object value = null;
-
         for (int i = 0; i < parts.length; i++) {
             String key = parts[i];
             if (i == parts.length - 1) {
@@ -94,23 +110,46 @@ public class YamlService {
                 current = castToStringObjectMap(nested);
             }
         }
-
         return value;
     }
 
     public String getString(String path) {
-        Object value = get(path);
-        return value != null ? String.valueOf(value) : null;
+        Object v = get(path);
+        return v == null ? null : String.valueOf(v);
     }
 
-    public void set(String path, Object value) {
-        if (configMap == null || configMap.isEmpty()) {
-            load();
-        }
+    public boolean getBoolean(String path, boolean def) {
+        Object v = get(path);
+        if (v instanceof Boolean b) return b;
+        if (v instanceof String s) return Boolean.parseBoolean(s.trim());
+        return def;
+    }
 
+    public int getInt(String path, int def) {
+        Object v = get(path);
+        if (v instanceof Number n) return n.intValue();
+        if (v instanceof String s) {
+            try { return Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
+        }
+        return def;
+    }
+
+    public long getLong(String path, long def) {
+        Object v = get(path);
+        if (v instanceof Number n) return n.longValue();
+        if (v instanceof String s) {
+            try { return Long.parseLong(s.trim()); } catch (NumberFormatException ignored) {}
+        }
+        return def;
+    }
+
+    // -------------------- Mutators --------------------
+
+    public synchronized void set(String path, Object value) {
+        if (configMap == null || configMap.isEmpty()) load();
+        if (path == null || path.isBlank()) return;
         String[] parts = path.split("\\.");
         Map<String, Object> current = configMap;
-
         for (int i = 0; i < parts.length; i++) {
             String key = parts[i];
             if (i == parts.length - 1) {
@@ -124,47 +163,39 @@ public class YamlService {
                 current = castToStringObjectMap(next);
             }
         }
-
-        logger.info("📝 Updated config.yaml field: " + path + " = " + value);
-        save();
+        logger.info("📝 Updated config: " + path + " = " + value, getClass().getName());
     }
 
-    public void put(String path, Map<String, Object> map) {
+    /** Bulk set without saving on each set; call save() once after. */
+    public synchronized void setMultiple(Map<String, Object> updates) {
+        if (updates == null) return;
+        updates.forEach(this::set);
+    }
+
+    /** Put a sub-map under a base path (e.g., put("guilds.123", map)). */
+    public synchronized void put(String basePath, Map<String, Object> map) {
         if (map == null) return;
-        for (Map.Entry<String, Object> entry : map.entrySet()) {
-            set(path + "." + entry.getKey(), entry.getValue());
-        }
-    }
-
-    public void setMultiple(Map<String, Object> updates) {
-        for (Map.Entry<String, Object> entry : updates.entrySet()) {
-            set(entry.getKey(), entry.getValue());
-        }
+        map.forEach((k, v) -> set(basePath + "." + k, v));
     }
 
     public Map<String, Object> getFullConfig() {
         return configMap;
     }
 
-    public Map<String, Object> deepMerge(Map<String, Object> defaultMap, Map<String, Object> overrideMap) {
-        Map<String, Object> result = new LinkedHashMap<>(defaultMap);
+    // -------------------- Merge helpers --------------------
 
-        for (Map.Entry<String, Object> entry : overrideMap.entrySet()) {
-            String key = entry.getKey();
-            Object overrideValue = entry.getValue();
-            Object baseValue = result.get(key);
-
-            if (overrideValue instanceof Map && baseValue instanceof Map) {
-                Map<String, Object> mergedChild = deepMerge(
-                        castToStringObjectMap(baseValue),
-                        castToStringObjectMap(overrideValue)
-                );
-                result.put(key, mergedChild);
+    public Map<String, Object> deepMerge(Map<String, Object> base, Map<String, Object> override) {
+        Map<String, Object> result = new LinkedHashMap<>(base);
+        for (Map.Entry<String, Object> e : override.entrySet()) {
+            String key = e.getKey();
+            Object ov = e.getValue();
+            Object bv = result.get(key);
+            if (ov instanceof Map && bv instanceof Map) {
+                result.put(key, deepMerge(castToStringObjectMap(bv), castToStringObjectMap(ov)));
             } else {
-                result.put(key, overrideValue);
+                result.put(key, ov);
             }
         }
-
         return result;
     }
 
@@ -173,7 +204,7 @@ public class YamlService {
         try {
             return (Map<String, Object>) obj;
         } catch (ClassCastException e) {
-            logger.error("❌ Failed to cast object to Map<String, Object>: " + e.getMessage(), getClass().toString());
+            logger.error("❌ Failed to cast object to Map<String, Object>: " + e.getMessage(), getClass().getName());
             return new LinkedHashMap<>();
         }
     }

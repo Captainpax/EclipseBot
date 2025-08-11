@@ -21,14 +21,19 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
+/**
+ * MessagingService: thin convenience layer for DM’ing, kicking off the setup wizard,
+ * and (optionally) relaying raw interactions to the Bytes bridge.
+ */
+@SuppressWarnings("unused")
 @Service
 public class MessagingService {
 
     private final LoggerService logger;
     private final YamlService yamlService;
     private final AtomicReference<JDA> jdaRef;
-    private final Bytes bytes;                   // paged-system bridge (edits-in-place)
-    private final MasterGuildSetup masterGuildSetup;
+    private final Bytes bytes;                       // Paged-chain runtime (handles edit-in-place)
+    private final MasterGuildSetup masterGuildSetup; // The Setup wizard chain
 
     public MessagingService(
             LoggerService logger,
@@ -47,7 +52,6 @@ public class MessagingService {
     @PostConstruct
     public void onInit() {
         logger.info("✅ MessagingService initialized", getClass().getName());
-        // Bytes now just keep sessions and handlers; safe to call nothing else here
     }
 
     @PreDestroy
@@ -57,7 +61,7 @@ public class MessagingService {
 
     // ========================= Public API =========================
 
-    /** Reads admin ID from YAML and greets on startup. */
+    /** Reads admin ID from YAML and greets on startup (then launches the setup wizard if eligible). */
     public void greetAdminOnStartup() {
         String adminId = yamlService.getString("discord.adminId");
         if (adminId == null || adminId.isBlank()) {
@@ -86,35 +90,36 @@ public class MessagingService {
         if (options.isEmpty()) {
             dmUser(adminId,
                     """
-                            ⚠️ I can't find any servers where you are **Owner** or have **Administrator** permissions while I'm present.
-                            • Invite me to your server, or
-                            • Ensure you have Admin perms where I'm installed.
-                            Then run `/setup` or restart me.""");
+                    ⚠️ I couldn't find any servers where you are **Owner** or have **Administrator** while I'm present.
+                    • Invite me to your server, or
+                    • Ensure you have Admin perms where I'm installed,
+                    then run `/setup` or restart me."""
+            );
             return;
         }
 
-        // Hand off to the chain (MasterGuildSetup builds a PagedChain, and Bytes starts it)
         try {
-            masterGuildSetup.start(adminId, options); // internally calls bytes.startDmPagedChain(...)
+            // Kick off the paged wizard (MasterGuildSetup will call bytes.startDmPagedChain internally)
+            masterGuildSetup.start(adminId, options);
         } catch (Exception e) {
             logger.error("Failed to start MasterGuildSetup: " + e.getMessage(), getClass().getName(), e);
             dmUser(adminId, "❌ Failed to start setup wizard. Check logs and try `/setup` again.");
         }
     }
 
-    /** Optional passthrough if you still route dropdowns here from a generic listener. */
+    /** Optional passthrough if you route select-interactions here: delegates to Bytes. */
     public void handleDropdownInteraction(StringSelectInteractionEvent event) {
         try {
             logger.info("[MessagingService] handleDropdownInteraction id=" + event.getComponentId() +
                     " user=" + event.getUser().getId() +
                     " values=" + event.getValues(), getClass().getName());
-            bytes.handleDropdownInteraction(event); // deferEdit + router + re-render (edit-in-place)
+            bytes.handleDropdownInteraction(event); // bytes defers, routes, and re-renders in-place
         } catch (Exception e) {
             logger.error("Dropdown interaction handling failed: " + e.getMessage(), getClass().getName(), e);
         }
     }
 
-    /** Sends a plain text DM via Bytes helper. */
+    /** Simple plain text DM via Bytes helper. */
     public void dmUser(String userId, String content) {
         logger.info("📨 DM to user [" + userId + "]", getClass().getName());
         try {
@@ -125,8 +130,8 @@ public class MessagingService {
     }
 
     /**
-     * Adhoc DM with dropdown that supports separate label/value (outside a page system).
-     * Prefer using a PagedChain when possible.
+     * Ad‑hoc DM with a standalone dropdown that supports label/value pairs (outside the paged system).
+     * Prefer using a PagedChain where possible.
      */
     public void dmUserWithDropdown(String userId,
                                    String message,
@@ -140,8 +145,11 @@ public class MessagingService {
             logger.warn("❌ JDA not initialized — cannot send dropdown.", getClass().getName());
             return;
         }
+        if (options == null || options.isEmpty()) {
+            logger.warn("❌ No options provided for dropdown " + dropdownId, getClass().getName());
+            return;
+        }
 
-        assert options != null;
         StringSelectMenu menu = StringSelectMenu.create(dropdownId)
                 .addOptions(options)
                 .build();
@@ -149,7 +157,7 @@ public class MessagingService {
         jda.retrieveUserById(userId).queue(user ->
                 user.openPrivateChannel().queue(channel ->
                         channel.sendMessage(message)
-                                .setComponents(ActionRow.of(menu)) // JDA 5
+                                .setComponents(ActionRow.of(menu))
                                 .queue(
                                         ok -> logger.info("✅ Sent dropdown to " + user.getAsTag(), getClass().getName()),
                                         err -> logger.error("❌ Failed to send dropdown: " + err.getMessage(), getClass().getName())
@@ -161,36 +169,37 @@ public class MessagingService {
     // ========================= Internal helpers =========================
 
     /**
-     * Build a list of guild options (label=name, value=id) where the admin is
-     * the **owner** or has **Administrator**. We avoid relying on member cache:
-     *  1) Include guilds where ownerId == adminId
-     *  2) Best-effort REST fetch of the member, then check ADMINISTRATOR
+     * Build a list of guild options (label=name, value=id) where the given admin is
+     * the **owner** or has **ADMINISTRATOR** permissions — AND the bot is in that guild.
+     * We try to avoid heavy caching:
+     *  1) Include guilds where ownerId == adminId (cheap check).
+     *  2) Attempt a REST fetch for the member to check ADMINISTRATOR (requires GUILD_MEMBERS intent).
      */
     private List<SelectOption> getEligibleGuildOptions(JDA jda, String adminId) {
         List<SelectOption> out = new ArrayList<>();
 
         jda.getGuilds().forEach(guild -> {
-            // Owner fast-path (no privileged intents needed)
+            // Owner shortcut
             if (adminId.equals(guild.getOwnerId())) {
                 out.add(SelectOption.of(guild.getName(), guild.getId()));
                 return;
             }
 
-            // Try a lightweight member fetch (may require GUILD_MEMBERS intent in Dev Portal)
+            // Best-effort member fetch (blocking once at startup is OK)
             try {
-                Member m = guild.retrieveMemberById(adminId).submit().get(); // blocking on startup is acceptable
+                Member m = guild.retrieveMemberById(adminId).complete();
                 if (m != null && (m.isOwner() || m.hasPermission(Permission.ADMINISTRATOR))) {
                     out.add(SelectOption.of(guild.getName(), guild.getId()));
                 }
             } catch (Exception ignored) {
-                // If we can't fetch, we just skip this guild
+                // If we can't fetch (no perms/intent/user missing), just skip this guild
             }
         });
 
         return out;
     }
 
-    /** Optional: track regular messages by logging. */
+    /** Optional: simple logger for regular messages. */
     public void trackIncomingMessage(MessageReceivedEvent event) {
         var msg = event.getMessage();
         if (msg.getAuthor().isBot()) return;
@@ -204,7 +213,7 @@ public class MessagingService {
         User author = msg.getAuthor();
         final String summary = String.format("[%s] <%s | %s> @ %s → %s",
                 channelType,
-                author.getName(),            // discriminator deprecated in v5
+                author.getName(),
                 author.getId(),
                 channelName,
                 content
@@ -212,7 +221,7 @@ public class MessagingService {
         logger.info(summary, getClass().getName());
     }
 
-    // Convenience send-to-channel if you need it elsewhere
+    /** Convenience send-to-channel if needed elsewhere. */
     public void sendToChannel(MessageChannel channel, String content) {
         if (channel == null) return;
         channel.sendMessage(content).queue();
